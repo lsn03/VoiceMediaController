@@ -57,6 +57,5 @@ dependencies {
 
     implementation(libs.androidx.media3.session)
     implementation(libs.vosk.android)
-    implementation(libs.jna)
 
 }
