@@ -21,7 +21,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -30,9 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.getSystemService
 import androidx.lifecycle.Observer
@@ -40,6 +39,8 @@ import ru.lsn03.voicemediacontroller.service.VoiceService
 import ru.lsn03.voicemediacontroller.ui.theme.VoiceMediaControlTheme
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.ui.text.style.TextAlign
 
 class MainActivity : ComponentActivity() {
 
@@ -98,6 +99,7 @@ private fun createNotificationChannel(context: Context) {
 
         val systemService = getSystemService(context, NotificationManager::class.java)
         systemService?.createNotificationChannel(channel)
+
     }
 
 }
@@ -107,6 +109,19 @@ private fun createNotificationChannel(context: Context) {
 fun VoiceControlScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scrollState = rememberScrollState()
+
+    val prefs = remember { context.getSharedPreferences("jarvis_prefs", Context.MODE_PRIVATE) }
+    var happyVol by remember { mutableStateOf(prefs.getFloat("happy_vol", 0.6f)) }
+    var sadVol by remember { mutableStateOf(prefs.getFloat("sad_vol", 0.6f)) }
+
+    fun sendVolumes() {
+        val i = Intent(context, VoiceService::class.java).apply {
+            putExtra("happy_vol", happyVol)
+            putExtra("sad_vol", sadVol)
+        }
+        ContextCompat.startForegroundService(context, i)
+    }
 
     var isRunning by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Остановлен") }
@@ -131,7 +146,6 @@ fun VoiceControlScreen(modifier: Modifier = Modifier) {
         onDispose { VoiceService.recognizedText.removeObserver(observer) }
     }
 
-    // Авто-старт при запуске приложения (один раз при заходе на экран)
     LaunchedEffect(Unit) {
         val granted = ContextCompat.checkSelfPermission(context, RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
@@ -145,11 +159,14 @@ fun VoiceControlScreen(modifier: Modifier = Modifier) {
     }
 
     Column(
-        modifier = modifier.fillMaxSize().padding(32.dp),
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState)
+            .padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(text = status, style = MaterialTheme.typography.headlineMedium)
-        Text(text = recognizedStatus, modifier = Modifier.padding(top = 8.dp))
+        Text(text = status, style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
+        Text(text = recognizedStatus, modifier = Modifier.padding(top = 8.dp), textAlign = TextAlign.Center)
 
         Button(
             modifier = Modifier.padding(top = 16.dp),
@@ -169,10 +186,53 @@ fun VoiceControlScreen(modifier: Modifier = Modifier) {
                         micPermissionLauncher.launch(RECORD_AUDIO)
                     }
                 }
+            }
+        ) { Text(if (isRunning) "Stop" else "Start") }
+
+        Text("Громкость: Wake (весёлая)", modifier = Modifier.padding(top = 24.dp))
+        Slider(
+            value = happyVol,
+            onValueChange = { v ->
+                happyVol = v
+                prefs.edit().putFloat("happy_vol", v).apply()
+                sendVolumes()
             },
-            colors = ButtonDefaults.buttonColors()
-        ) {
-            Text(if (isRunning) "Stop" else "Start")
-        }
+            valueRange = 0f..1f
+        )
+
+        Button(
+            modifier = Modifier.padding(top = 8.dp),
+            onClick = {
+                val i = Intent(context, VoiceService::class.java).apply {
+                    action = "ru.lsn03.voicemediacontroller.action.PREVIEW_WAKE"
+                    putExtra("happy_vol", happyVol)
+                    putExtra("sad_vol", sadVol)
+                }
+                ContextCompat.startForegroundService(context, i)
+            }
+        ) { Text("Прослушать wake") }
+
+        Text("Громкость: Sleep (грустная)", modifier = Modifier.padding(top = 16.dp))
+        Slider(
+            value = sadVol,
+            onValueChange = { v ->
+                sadVol = v
+                prefs.edit().putFloat("sad_vol", v).apply()
+                sendVolumes()
+            },
+            valueRange = 0f..1f
+        )
+
+        Button(
+            modifier = Modifier.padding(top = 8.dp),
+            onClick = {
+                val i = Intent(context, VoiceService::class.java).apply {
+                    action = "ru.lsn03.voicemediacontroller.action.PREVIEW_SLEEP"
+                    putExtra("happy_vol", happyVol)
+                    putExtra("sad_vol", sadVol)
+                }
+                ContextCompat.startForegroundService(context, i)
+            }
+        ) { Text("Прослушать sleep") }
     }
 }

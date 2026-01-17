@@ -12,15 +12,14 @@ class JarvisNotificationListener : android.service.notification.NotificationList
     override fun onListenerConnected() {
         super.onListenerConnected()
         connected = true
-        Log.d(APPLICATION_NAME, "JarvisNotificationListener::onListenerConnected")
+        Log.d(APPLICATION_NAME, "JarvisNotificationListener connected=true")
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         connected = false
-        Log.d(APPLICATION_NAME, "JarvisNotificationListener::onListenerDisconnected")
-        // попросить систему переподключить (если разрешение есть)
+        Log.d(APPLICATION_NAME, "JarvisNotificationListener connected=false")
+        // единственное безопасное действие после disconnect
         requestRebind(android.content.ComponentName(this, JarvisNotificationListener::class.java))
     }
-
 }

@@ -28,6 +28,8 @@ import ru.lsn03.voicemediacontroller.utils.Utilities.MODEL_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.VOICE_CHANNEL
 import java.io.File
 import java.io.IOException
+import ru.lsn03.voicemediacontroller.R
+import androidx.core.content.edit
 
 
 class VoiceService : Service() {
@@ -44,6 +46,10 @@ class VoiceService : Service() {
         private val SAMPLE_RATE = 16000
         private val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
+
+        const val ACTION_PREVIEW_WAKE = "ru.lsn03.voicemediacontroller.action.PREVIEW_WAKE"
+        const val ACTION_PREVIEW_SLEEP = "ru.lsn03.voicemediacontroller.action.PREVIEW_SLEEP"
+
     }
 
     private var isListeningCommand = false
@@ -74,6 +80,22 @@ class VoiceService : Service() {
         getSystemService(AUDIO_SERVICE) as android.media.AudioManager
     }
 
+    @Volatile private var soundsReady = false
+
+
+    private var soundPool: android.media.SoundPool? = null
+    private var sndHappy = 0
+    private var sndSad = 0
+
+    private var happyVol = 0.6f
+    private var sadVol = 0.6f
+
+    private val PREFS = "jarvis_prefs"
+    private val KEY_HAPPY_VOL = "happy_vol"
+    private val KEY_SAD_VOL = "sad_vol"
+
+
+
     private fun volumeUp() {
         audioManager.adjustStreamVolume(
             android.media.AudioManager.STREAM_MUSIC,
@@ -93,13 +115,36 @@ class VoiceService : Service() {
     private val COMMAND_TIMEOUT_MS = 10000L  // 10 секунд
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(APPLICATION_NAME, "VoiceService::onStartCommand")
+        intent?.extras?.let { b ->
+            if (b.containsKey(KEY_HAPPY_VOL)) {
+                happyVol = b.getFloat(KEY_HAPPY_VOL).coerceIn(0f, 1f)
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit { putFloat(KEY_HAPPY_VOL, happyVol) }
+                Log.d(APPLICATION_NAME, "happyVol=$happyVol")
+            }
+            if (b.containsKey(KEY_SAD_VOL)) {
+                sadVol = b.getFloat(KEY_SAD_VOL).coerceIn(0f, 1f)
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit { putFloat(KEY_SAD_VOL, sadVol) }
+                Log.d(APPLICATION_NAME, "sadVol=$sadVol")
+            }
+        }
+
+        when (intent?.action) {
+            ACTION_PREVIEW_WAKE -> {
+                Log.d(APPLICATION_NAME, "Preview WAKE")
+                playHappy()
+            }
+            ACTION_PREVIEW_SLEEP -> {
+                Log.d(APPLICATION_NAME, "Preview SLEEP")
+                playSad()
+            }
+        }
+
 
         val notification = createNotification()
         startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-
         return START_STICKY
     }
+
 
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, VOICE_CHANNEL)
@@ -142,6 +187,31 @@ class VoiceService : Service() {
                         ]
                         """.trimIndent()
         )
+
+        // prefs
+        val sp = getSharedPreferences(PREFS, MODE_PRIVATE)
+        happyVol = sp.getFloat(KEY_HAPPY_VOL, 0.6f)
+        sadVol = sp.getFloat(KEY_SAD_VOL, 0.6f)
+
+        // SoundPool
+        val attrs = android.media.AudioAttributes.Builder()
+            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build()
+
+
+        soundPool = android.media.SoundPool.Builder()
+            .setMaxStreams(2)
+            .setAudioAttributes(attrs)
+            .build()
+
+        soundPool?.setOnLoadCompleteListener { _, sampleId, status ->
+            Log.d(APPLICATION_NAME, "SoundPool onLoadComplete sampleId=$sampleId status=$status")
+        }
+        sndHappy = soundPool!!.load(this, R.raw.start_water, 1)
+        sndSad = soundPool!!.load(this, R.raw.end_water, 1)
+
+        Log.d(APPLICATION_NAME, "SoundPool load ids: happy=$sndHappy sad=$sndSad")
 
 
         startListening()
@@ -235,11 +305,16 @@ class VoiceService : Service() {
                                 if (now2 - lastWakeTriggerMs >= WAKE_DEBOUNCE_MS) {
                                     lastWakeTriggerMs = now2
                                     recognizedText.postValue("Джарвис! Слушаю команду...")
+                                    Log.d(APPLICATION_NAME, "VoiceService:: Услышал команду $txt")
+                                    playHappy()
                                     switchToCommandMode()
+
                                 }
                             }
 
                             txt.startsWith("джарвис ") -> {
+                                Log.d(APPLICATION_NAME, "VoiceService:: Услышал команду $txt")
+                                playHappy()
                                 // выполняем сразу, без переключения режима
                                 val cmd = txt.removePrefix("джарвис ").trim()
                                 recognizedText.postValue("Выполняю: $cmd")
@@ -285,6 +360,7 @@ class VoiceService : Service() {
         handler.removeCallbacks(commandTimeoutRunnable)
         wakeRecognizer.reset()
         commandRecognizer.reset()
+        wakeCommandRecognizer.reset()
         recognizedText.postValue("Слушаю...")
         Log.d(APPLICATION_NAME, "VoiceService::resetToWakeModeInternal")
     }
@@ -344,6 +420,7 @@ class VoiceService : Service() {
             else -> Log.d(APPLICATION_NAME, "Неизвестная команда: $text")
         }
 
+        playSad()
         // Команда выполнена — теперь можно выходить в wake
         resetToWakeMode()
 
@@ -367,6 +444,16 @@ class VoiceService : Service() {
         }
         controller.transportControls.play()
         Log.d(APPLICATION_NAME, "VoiceService::playPlayback play отправлен в ${controller.packageName}")
+    }
+
+    private fun playHappy() {
+        val id = soundPool?.play(sndHappy, happyVol, happyVol, 1, 0, 1f) ?: 0
+        Log.d(APPLICATION_NAME, "VoiceService::playHappy soundId=$sndHappy streamId=$id vol=$happyVol")
+    }
+
+    private fun playSad() {
+        val id = soundPool?.play(sndSad, sadVol, sadVol, 1, 0, 1f) ?: 0
+        Log.d(APPLICATION_NAME, "VoiceService::playSad soundId=$sndSad streamId=$id vol=$sadVol")
     }
 
 
@@ -397,9 +484,15 @@ class VoiceService : Service() {
         val accessGranted = nm.isNotificationListenerAccessGranted(cn)
         val connected = JarvisNotificationListener.connected
 
+        if (accessGranted && !connected) {
+            android.service.notification.NotificationListenerService.requestRebind(cn)
+            Log.d(APPLICATION_NAME, "requestRebind() called for NotificationListener")
+        }
+
         Log.d(APPLICATION_NAME, "NotifAccess=$accessGranted, listenerConnected=$connected")
         return accessGranted && connected
     }
+
 
 
     private fun getTopMediaController(): android.media.session.MediaController? {
@@ -455,6 +548,11 @@ class VoiceService : Service() {
         audioRecord?.release()
         audioRecord = null
         isRunning = false
+
+        soundPool?.release()
+        soundPool = null
+
+
     }
 
 
