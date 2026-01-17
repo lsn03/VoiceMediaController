@@ -8,6 +8,8 @@
 	<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 	<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 	<uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+	<uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+					 tools:ignore="ProtectedPermissions"/>
 
 	<application
 			android:allowBackup="true"
@@ -27,11 +29,13 @@
 				android:name=".service.JarvisNotificationListener"
 				android:label="Jarvis Media Listener"
 				android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-				android:exported="false">
+				android:exported="true">
 			<intent-filter>
 				<action android:name="android.service.notification.NotificationListenerService" />
 			</intent-filter>
 		</service>
+
+
 
 
 

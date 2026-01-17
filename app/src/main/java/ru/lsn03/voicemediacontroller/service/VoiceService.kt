@@ -605,7 +605,7 @@ class VoiceService : Service() {
         if (!destDir.exists()) destDir.mkdirs()
 
         assets.list(fromAssetPath)?.forEach { child ->
-            Log.d(APPLICATION_NAME, "VoiceService::copyAssetFolder child: $child")
+//            Log.d(APPLICATION_NAME, "VoiceService::copyAssetFolder child: $child")
             val childAsset = "$fromAssetPath/$child"
             val destFile = File(destDir, child)
 
