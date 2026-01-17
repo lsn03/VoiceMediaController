@@ -108,6 +108,16 @@ private fun createNotificationChannel(context: Context) {
 @Composable
 fun VoiceControlScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
+
+    val nm = remember { context.getSystemService(NotificationManager::class.java) }
+    val cn = remember { android.content.ComponentName(context, ru.lsn03.voicemediacontroller.service.JarvisNotificationListener::class.java) }
+
+    fun isNotifAccessGranted(): Boolean = nm.isNotificationListenerAccessGranted(cn)
+
+    var notifAccess by remember { mutableStateOf(false) }
+    var listenerConnected by remember { mutableStateOf(false) }
+
+
     val lifecycleOwner = LocalLifecycleOwner.current
     val scrollState = rememberScrollState()
 
@@ -158,6 +168,15 @@ fun VoiceControlScreen(modifier: Modifier = Modifier) {
         }
     }
 
+    LaunchedEffect(Unit) {
+        while (true) {
+            notifAccess = isNotifAccessGranted()
+            listenerConnected = ru.lsn03.voicemediacontroller.service.JarvisNotificationListener.connected
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -165,8 +184,29 @@ fun VoiceControlScreen(modifier: Modifier = Modifier) {
             .padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+
+
         Text(text = status, style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
         Text(text = recognizedStatus, modifier = Modifier.padding(top = 8.dp), textAlign = TextAlign.Center)
+
+        if (notifAccess && !listenerConnected) {
+            Text(
+                text = "Доступ к уведомлениям включён, но сервис не подключился.\nОткрой настройки доступа и выключи/включи переключатель для приложения.",
+                modifier = Modifier.padding(top = 16.dp),
+                textAlign = TextAlign.Center,
+                color = androidx.compose.ui.graphics.Color(0xFFB00020) // красный/ошибка
+            )
+
+            Button(
+                modifier = Modifier.padding(top = 8.dp),
+                onClick = {
+                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                }
+            ) {
+                Text("Переподключить доступ")
+            }
+        }
+
 
         Button(
             modifier = Modifier.padding(top = 16.dp),
