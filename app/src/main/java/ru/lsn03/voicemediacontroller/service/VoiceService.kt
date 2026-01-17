@@ -35,6 +35,8 @@ class VoiceService : Service() {
     private lateinit var model: Model
     private lateinit var wakeRecognizer: Recognizer  // Только "джарвис"
     private lateinit var commandRecognizer: Recognizer  // Полные команды
+    private lateinit var wakeCommandRecognizer: Recognizer
+
 
     companion object {
         val recognizedText = MutableLiveData<String>("Слушаю...")
@@ -125,6 +127,23 @@ class VoiceService : Service() {
             """["следующий трек","следующий", "предыдущий трек", "предыдущий", "некст","прев", "пауза", "стоп", "уменьши", "увеличь", "громче", "тише", "продолжить", "продолжи","возобнови","плей", "плэй", "играй","старт", "стоп"]"""
         )
 
+        wakeCommandRecognizer = Recognizer(
+            model, SAMPLE_RATE.toFloat(),
+            """
+                        [
+                          "джарвис следующий трек", "джарвис следующий", "джарвис некст",
+                          "джарвис предыдущий трек", "джарвис предыдущий", "джарвис прев",
+                          "джарвис пауза", "джарвис стоп",
+                          "джарвис громче", "джарвис увеличь",
+                          "джарвис тише", "джарвис уменьши",
+                          "джарвис продолжи", "джарвис продолжить", "джарвис возобнови",
+                          "джарвис плей", "джарвис плэй", "джарвис играй", "джарвис старт",
+                          "[unk]"
+                        ]
+                        """.trimIndent()
+        )
+
+
         startListening()
     }
 
@@ -205,31 +224,44 @@ class VoiceService : Service() {
                     }
                 } else {
                     // ---------- РЕЖИМ WAKE ----------
-                    val isFinal = wakeRecognizer.acceptWaveForm(pcm, pcm.size)
+                    val isFinal = wakeCommandRecognizer.acceptWaveForm(pcm, pcm.size)
 
                     if (isFinal) {
-                        // ВАЖНО: используем только финальный result
-                        val wakeText = parseText(wakeRecognizer.result).trim().lowercase()
+                        val txt = parseText(wakeCommandRecognizer.result).trim().lowercase()
 
-                        if (wakeText.contains("джарвис")) {
-                            if (now - lastWakeTriggerMs >= WAKE_DEBOUNCE_MS) {
-                                lastWakeTriggerMs = now
-                                Log.d(APPLICATION_NAME, "VoiceService Wake by FINAL result: ${wakeRecognizer.result}")
-                                recognizedText.postValue("Джарвис! Слушаю команду...")
-                                switchToCommandMode()
+                        when {
+                            txt == "джарвис" -> {
+                                val now2 = SystemClock.elapsedRealtime()
+                                if (now2 - lastWakeTriggerMs >= WAKE_DEBOUNCE_MS) {
+                                    lastWakeTriggerMs = now2
+                                    recognizedText.postValue("Джарвис! Слушаю команду...")
+                                    switchToCommandMode()
+                                }
                             }
-                        } else {
-                            // чтобы не копить состояние, когда финал не наш
-                            wakeRecognizer.reset()
+
+                            txt.startsWith("джарвис ") -> {
+                                // выполняем сразу, без переключения режима
+                                val cmd = txt.removePrefix("джарвис ").trim()
+                                recognizedText.postValue("Выполняю: $cmd")
+                                handleCommand("""{"text":"$cmd"}""")  // лайфхак: переиспользуем handleCommand
+                                // остаёмся в WAKE
+                                wakeCommandRecognizer.reset()
+                            }
+
+                            else -> {
+                                // не наша фраза
+                                wakeCommandRecognizer.reset()
+                            }
                         }
                     } else {
-                        // partial — только для отображения (не для триггера!)
-                        val wakePartialText = parsePartial(wakeRecognizer.partialResult).trim()
+                        // partial — только UI
+                        val wakePartialText = parsePartial(wakeCommandRecognizer.partialResult).trim()
                         if (wakePartialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
                             lastUiUpdateMs = now
                             recognizedText.postValue("Слышу: $wakePartialText")
                         }
                     }
+
                 }
             }
         }
