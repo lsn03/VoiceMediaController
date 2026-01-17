@@ -19,17 +19,17 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.lifecycle.MutableLiveData
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
+import ru.lsn03.voicemediacontroller.R
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.MODEL_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.VOICE_CHANNEL
 import java.io.File
 import java.io.IOException
-import ru.lsn03.voicemediacontroller.R
-import androidx.core.content.edit
 
 
 class VoiceService : Service() {
@@ -51,6 +51,13 @@ class VoiceService : Service() {
         const val ACTION_PREVIEW_SLEEP = "ru.lsn03.voicemediacontroller.action.PREVIEW_SLEEP"
 
     }
+
+    private var focusReq: android.media.AudioFocusRequest? = null
+    @Volatile
+    private var duckActive = false
+
+    private val afListener = android.media.AudioManager.OnAudioFocusChangeListener { /* можно игнорить */ }
+
 
     private var isListeningCommand = false
     private var lastUiUpdateMs = 0L
@@ -80,7 +87,8 @@ class VoiceService : Service() {
         getSystemService(AUDIO_SERVICE) as android.media.AudioManager
     }
 
-    @Volatile private var soundsReady = false
+    @Volatile
+    private var soundsReady = false
 
 
     private var soundPool: android.media.SoundPool? = null
@@ -93,7 +101,6 @@ class VoiceService : Service() {
     private val PREFS = "jarvis_prefs"
     private val KEY_HAPPY_VOL = "happy_vol"
     private val KEY_SAD_VOL = "sad_vol"
-
 
 
     private fun volumeUp() {
@@ -133,6 +140,7 @@ class VoiceService : Service() {
                 Log.d(APPLICATION_NAME, "Preview WAKE")
                 playHappy()
             }
+
             ACTION_PREVIEW_SLEEP -> {
                 Log.d(APPLICATION_NAME, "Preview SLEEP")
                 playSad()
@@ -347,6 +355,8 @@ class VoiceService : Service() {
 
 
     private fun switchToCommandModeInternal() {
+        duckStart() // <-- ДО начала распознавания команды
+
         isListeningCommand = true
         commandRecognizer.reset()
         recognizedText.postValue("Слушаю команду...")
@@ -355,15 +365,22 @@ class VoiceService : Service() {
         Log.d(APPLICATION_NAME, "VoiceService::switchToCommandModeInternal")
     }
 
+
     private fun resetToWakeModeInternal() {
         isListeningCommand = false
         handler.removeCallbacks(commandTimeoutRunnable)
+
+        duckStop() // <-- ВСЕГДА отпускаем фокус при выходе из команд
+
         wakeRecognizer.reset()
         commandRecognizer.reset()
         wakeCommandRecognizer.reset()
+
+        playSad() //— оставь как тебе нужно (у тебя оно уже есть и тут, и в handleCommand)
         recognizedText.postValue("Слушаю...")
         Log.d(APPLICATION_NAME, "VoiceService::resetToWakeModeInternal")
     }
+
 
     private fun switchToCommandMode() {
         pendingSwitchToCommand = true
@@ -420,7 +437,7 @@ class VoiceService : Service() {
             else -> Log.d(APPLICATION_NAME, "Неизвестная команда: $text")
         }
 
-        playSad()
+//        playSad()
         // Команда выполнена — теперь можно выходить в wake
         resetToWakeMode()
 
@@ -494,7 +511,6 @@ class VoiceService : Service() {
     }
 
 
-
     private fun getTopMediaController(): android.media.session.MediaController? {
         if (!canControlMediaSessions()) {
             Log.e(
@@ -543,6 +559,8 @@ class VoiceService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(commandTimeoutRunnable)
+        duckStop() // <-- на всякий случай
+
         super.onDestroy()
         audioRecord?.stop()
         audioRecord?.release()
@@ -551,9 +569,8 @@ class VoiceService : Service() {
 
         soundPool?.release()
         soundPool = null
-
-
     }
+
 
 
     private fun modelPath(): String {
@@ -597,6 +614,41 @@ class VoiceService : Service() {
                 }
             }
         }
+    }
+
+    private fun duckStart() {
+        if (duckActive) return
+
+        val req = android.media.AudioFocusRequest.Builder(
+            android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+        )
+            .setAudioAttributes(
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .setOnAudioFocusChangeListener(afListener)
+            .build()
+
+        val granted = audioManager.requestAudioFocus(req) == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        Log.d(APPLICATION_NAME, "duckStart granted=$granted")
+
+        if (granted) {
+            focusReq = req
+            duckActive = true
+        }
+    }
+
+    private fun duckStop() {
+        val req = focusReq ?: run {
+            duckActive = false
+            return
+        }
+        audioManager.abandonAudioFocusRequest(req)
+        focusReq = null
+        duckActive = false
+        Log.d(APPLICATION_NAME, "duckStop")
     }
 
 
