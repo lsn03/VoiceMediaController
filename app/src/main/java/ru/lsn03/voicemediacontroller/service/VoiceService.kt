@@ -547,8 +547,11 @@ class VoiceService : Service() {
     }
 
 
+    fun normalize(s: String) = s.trim().lowercase()
+
+
     private fun handleCommand(resultJson: String) {
-        val text = parseText(resultJson).trim()
+        val text = normalize( parseText(resultJson))
 
         if (text.isEmpty()) {
             Log.d(APPLICATION_NAME, "⚠️ Пустая команда (скорее всего тишина) — остаюсь в режиме команд")
@@ -559,12 +562,12 @@ class VoiceService : Service() {
         Log.d(APPLICATION_NAME, "✅ Выполняю команду: $text")
         publishRecognizedText("Выполняю: $text")
 
-        val action = matcher.match(text.lowercase()) ?: VoiceAction.UNKNOWN
+        val action = matcher.match(text) ?: VoiceAction.UNKNOWN
         Log.d(APPLICATION_NAME, "CurrentAction= $action")
         executor.execute(action);
 
-        resetToWakeMode()
 
+        resetToWakeMode()
     }
 
     private fun pausePlayback() {
