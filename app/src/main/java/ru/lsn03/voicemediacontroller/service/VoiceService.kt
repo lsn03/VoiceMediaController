@@ -8,8 +8,6 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.media.SoundPool
 import android.os.*
 import android.speech.tts.TextToSpeech
@@ -23,6 +21,8 @@ import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
 import ru.lsn03.voicemediacontroller.R
+import ru.lsn03.voicemediacontroller.command.CommandBinding
+import ru.lsn03.voicemediacontroller.command.CommandMatcher
 import ru.lsn03.voicemediacontroller.events.VoiceEvents
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.MODEL_NAME
@@ -97,8 +97,6 @@ class VoiceService : Service() {
         getSystemService(AUDIO_SERVICE) as android.media.AudioManager
     }
 
-    @Volatile
-    private var soundsReady = false
 
 
     private var soundPool: android.media.SoundPool? = null
@@ -111,6 +109,45 @@ class VoiceService : Service() {
     private val PREFS = "jarvis_prefs"
     private val KEY_HAPPY_VOL = "happy_vol"
     private val KEY_SAD_VOL = "sad_vol"
+
+
+    private val matcher by lazy {
+        CommandMatcher(
+            listOf(
+                CommandBinding(
+                    listOf("следующий трек", "следующий", "некст", "че за хуйня", "что за хуйня"),
+                    VoiceAction.NEXT
+                ),
+                CommandBinding(listOf("предыдущий трек", "предыдущий", "прев"), VoiceAction.PREV),
+                CommandBinding(listOf("пауза", "стоп"), VoiceAction.STOP),
+                CommandBinding(
+                    listOf("продолжи", "продолжить", "возобнови", "плей", "плэй", "играй", "старт"),
+                    VoiceAction.START
+                ),
+                CommandBinding(listOf("тише", "уменьши"), VoiceAction.VOLUME_DOWN),
+                CommandBinding(listOf("громче", "увеличь"), VoiceAction.VOLUME_UP),
+                CommandBinding(listOf("время"), VoiceAction.SAY_TIME),
+                CommandBinding(listOf("название"), VoiceAction.SAY_TITLE),
+            )
+        )
+    }
+
+    private val executor: ActionExecutor = object : ActionExecutor {
+        override fun execute(action: VoiceAction) {
+            when (action) {
+                VoiceAction.NEXT -> nextTrack()
+                VoiceAction.PREV -> prevTrack()
+                VoiceAction.START -> playPlayback()
+                VoiceAction.STOP -> pausePlayback()
+                VoiceAction.VOLUME_UP -> volumeUp()
+                VoiceAction.VOLUME_DOWN -> volumeDown()
+                VoiceAction.SAY_TIME -> speakTime()
+                VoiceAction.SAY_TITLE -> speakNowPlaying()
+                VoiceAction.UNKNOWN -> Unit
+            }
+        }
+    }
+
 
 
     private fun volumeUp() {
@@ -522,54 +559,10 @@ class VoiceService : Service() {
         Log.d(APPLICATION_NAME, "✅ Выполняю команду: $text")
         publishRecognizedText("Выполняю: $text")
 
-        when (text.lowercase()) {
-            "следующий трек", "некст", "следующий", "хуйня", "че за хуйня", "что за хуйня" -> {
-                nextTrack()
-                Log.d(APPLICATION_NAME, "📱 Следующий трек")
-            }
+        val action = matcher.match(text.lowercase()) ?: VoiceAction.UNKNOWN
+        Log.d(APPLICATION_NAME, "CurrentAction= $action")
+        executor.execute(action);
 
-            "предыдущий трек", "прев", "предыдущий" -> {
-                prevTrack()
-                Log.d(APPLICATION_NAME, "⏮️ Предыдущий трек")
-            }
-
-            "пауза", "стоп" -> {
-                pausePlayback()
-                Log.d(APPLICATION_NAME, "⏸️ Пауза")
-            }
-
-            "уменьши", "тише" -> {
-                volumeDown();
-                Log.d(APPLICATION_NAME, "Уменьшить громкость")
-            }
-
-            "увеличь", "громче" -> {
-                volumeUp()
-                Log.d(APPLICATION_NAME, "Увеличь громкость")
-            }
-
-            "продолжи", "продолжить", "возобнови", "плей", "плэй", "играй", "старт" -> {
-                playPlayback()
-                Log.d(APPLICATION_NAME, "▶️ Продолжить")
-            }
-            "время" -> {
-//                duckStart()
-                speakTime()
-//                duckStop()
-            }
-            "название" -> {
-//                duckStart()
-                speakNowPlaying()
-//                duckStop()
-            }
-
-
-
-            else -> Log.d(APPLICATION_NAME, "Неизвестная команда: $text")
-        }
-
-//        playSad()
-        // Команда выполнена — теперь можно выходить в wake
         resetToWakeMode()
 
     }
