@@ -38,10 +38,6 @@ import java.util.*
 
 class VoiceService : Service() {
 
-    private lateinit var model: Model
-    private lateinit var wakeRecognizer: Recognizer  // Только "джарвис"
-    private lateinit var commandRecognizer: Recognizer  // Полные команды
-    private lateinit var wakeCommandRecognizer: Recognizer
     private lateinit var audioRecorder: AudioRecorder
     private lateinit var vosk: VoskEngine
 
@@ -279,8 +275,7 @@ class VoiceService : Service() {
     private fun initializeVoskModel() {
         vosk = VoskEngine(
             context = this,
-            sampleRate = SAMPLE_RATE,
-            modelPathProvider = { modelPath() }
+            sampleRate = SAMPLE_RATE
         )
         vosk.start()
     }
@@ -733,51 +728,6 @@ class VoiceService : Service() {
             }
             val params = Bundle()
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
-        }
-    }
-
-
-
-    private fun modelPath(): String {
-        val modelDir = File(cacheDir, MODEL_NAME)
-        Log.d(APPLICATION_NAME, "VoiceService::modelPath Модель: ${modelDir.absolutePath}")
-
-        if (modelDir.exists() && modelDir.listFiles()?.size ?: 0 > 5) {  // >5 файлов = OK
-            Log.d(APPLICATION_NAME, "VoiceService::modelPath Модель готова: ${modelDir.listFiles()?.size} файлов")
-            return modelDir.absolutePath
-        }
-
-        // Копируем ПАПКУ из assets
-        try {
-            copyAssetFolder(MODEL_NAME, modelDir)
-            modelDir.setReadable(true, false)
-            Log.d(APPLICATION_NAME, "VoiceService::modelPath Модель скопирована: ${modelDir.listFiles()?.size} файлов")
-        } catch (e: IOException) {
-            Log.e(APPLICATION_NAME, "VoiceService::modelPath Ошибка копирования модели", e)
-            throw e
-        }
-        return modelDir.absolutePath
-    }
-
-    private fun copyAssetFolder(fromAssetPath: String, destDir: File) {
-        if (!destDir.exists()) destDir.mkdirs()
-
-        assets.list(fromAssetPath)?.forEach { child ->
-//            Log.d(APPLICATION_NAME, "VoiceService::copyAssetFolder child: $child")
-            val childAsset = "$fromAssetPath/$child"
-            val destFile = File(destDir, child)
-
-            if (assets.list(childAsset)?.isNotEmpty() == true) {
-                // Рекурсивно папка
-                copyAssetFolder(childAsset, destFile)
-            } else {
-                // Файл
-                assets.open(childAsset).use { input ->
-                    destFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
-            }
         }
     }
 

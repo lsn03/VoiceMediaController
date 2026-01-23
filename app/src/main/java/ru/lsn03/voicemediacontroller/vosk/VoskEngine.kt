@@ -16,7 +16,6 @@ import java.io.IOException
 class VoskEngine(
     private val context: Context,
     private val sampleRate: Int,
-    private val modelPathProvider: () -> String,
 ) {
 
     private lateinit var model: Model
