@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlarmManager
 import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
@@ -12,10 +13,12 @@ import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -30,6 +33,9 @@ import ru.lsn03.voicemediacontroller.utils.Utilities.MODEL_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.VOICE_CHANNEL
 import java.io.File
 import java.io.IOException
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 
 class VoiceService : Service() {
@@ -38,6 +44,9 @@ class VoiceService : Service() {
     private lateinit var wakeRecognizer: Recognizer  // Только "джарвис"
     private lateinit var commandRecognizer: Recognizer  // Полные команды
     private lateinit var wakeCommandRecognizer: Recognizer
+
+
+
 
 
     companion object {
@@ -49,6 +58,11 @@ class VoiceService : Service() {
 
         const val ACTION_PREVIEW_WAKE = "ru.lsn03.voicemediacontroller.action.PREVIEW_WAKE"
         const val ACTION_PREVIEW_SLEEP = "ru.lsn03.voicemediacontroller.action.PREVIEW_SLEEP"
+
+        const val ACTION_OPEN_TTS_INSTALL = "ru.lsn03.voicemediacontroller.action.OPEN_TTS_INSTALL"
+        const val ACTION_OPEN_TTS_SETTINGS = "ru.lsn03.voicemediacontroller.action.OPEN_TTS_SETTINGS"
+        const val NOTIF_ID = 1              // у тебя уже startForeground(1,...)
+        const val NOTIF_TTS_HELP_ID = 2     // отдельная нотификация-помощник
 
     }
 
@@ -64,6 +78,10 @@ class VoiceService : Service() {
     private var lastWakeTriggerMs = 0L
     private val UI_THROTTLE_MS = 250L        // не чаще 4 раз/сек
     private val WAKE_DEBOUNCE_MS = 1200L     // защита от повторов "джарвис"
+
+    private var tts: TextToSpeech? = null
+    @Volatile private var ttsReady: Boolean = false
+
 
     @Volatile
     private var pendingResetToWake = false
@@ -145,6 +163,14 @@ class VoiceService : Service() {
                 Log.d(APPLICATION_NAME, "Preview SLEEP")
                 playSad()
             }
+
+            ACTION_OPEN_TTS_INSTALL -> {
+                openTtsInstall()
+            }
+
+            ACTION_OPEN_TTS_SETTINGS -> {
+                openTtsSettings()
+            }
         }
 
 
@@ -168,6 +194,39 @@ class VoiceService : Service() {
         Log.i(APPLICATION_NAME, "VoiceService onCreate()")
         super.onCreate()
 
+        tts = TextToSpeech(applicationContext) { status ->
+            ttsReady = (status == TextToSpeech.SUCCESS)
+
+            Log.d(APPLICATION_NAME, "initialization TTS,status=$status")
+            if (ttsReady) {
+//                tts?.language = Locale("ru", "RU") // или Locale.getDefault()
+                tts?.language = Locale.getDefault()
+
+                tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String) {
+                        // onStart приходит не на main thread
+                        handler.post { duckStart() }
+                    }
+
+                    override fun onDone(utteranceId: String) {
+                        handler.post { duckStop() }
+                    }
+
+                    override fun onError(utteranceId: String) {
+                        handler.post { duckStop() }
+                    }
+                })
+
+            }
+            if (status != TextToSpeech.SUCCESS) {
+                Log.d(APPLICATION_NAME, "В системе не настроен движок синтеза речи. Нажми «Установить» или открой «Настройки».")
+                showTtsFixNotification("В системе не настроен движок синтеза речи. Нажми «Установить» или открой «Настройки».")
+            }
+
+        }
+
+
+
         model = Model(modelPath())
 
         // 👤 Wake word recognizer (маленькая грамматика)
@@ -182,7 +241,7 @@ class VoiceService : Service() {
                  "предыдущий", "некст","прев", "пауза", "стоп",
                   "уменьши", "увеличь", "громче", "тише", "продолжить",
                    "продолжи","возобнови","плей", "плэй", "играй",
-                   "старт", "стоп", "что за хуйня","че за хуйня"
+                   "старт", "стоп", "что за хуйня","че за хуйня", "время", "название"
                    ]
                    """
         )
@@ -198,6 +257,7 @@ class VoiceService : Service() {
                           "джарвис тише", "джарвис уменьши",
                           "джарвис продолжи", "джарвис продолжить", "джарвис возобнови",
                           "джарвис плей", "джарвис плэй", "джарвис играй", "джарвис старт",
+                          "джарвис время", "джарвис название",
                           "[unk]"
                         ]
                         """.trimIndent()
@@ -231,6 +291,60 @@ class VoiceService : Service() {
 
         startListening()
     }
+
+    private fun openTtsInstall() {
+        val i = Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(i)
+        } catch (e: Exception) {
+            Log.e(APPLICATION_NAME, "No activity for ACTION_INSTALL_TTS_DATA", e)
+            openTtsSettings()
+        }
+    }
+
+    private fun openTtsSettings() {
+        val i = Intent("com.android.settings.TTS_SETTINGS").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(i)
+        } catch (e: Exception) {
+            // Фоллбэк на общие настройки
+            startActivity(Intent(android.provider.Settings.ACTION_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+        }
+    }
+
+    private fun showTtsFixNotification(reason: String) {
+        val installIntent = Intent(this, VoiceService::class.java).apply { action = ACTION_OPEN_TTS_INSTALL }
+        val settingsIntent = Intent(this, VoiceService::class.java).apply { action = ACTION_OPEN_TTS_SETTINGS }
+
+        val piInstall = PendingIntent.getService(
+            this, 2001, installIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val piSettings = PendingIntent.getService(
+            this, 2002, settingsIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val n = NotificationCompat.Builder(this, VOICE_CHANNEL)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("Нужен синтез речи (TTS)")
+            .setContentText(reason)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .addAction(android.R.drawable.ic_menu_save, "Установить", piInstall)
+            .addAction(android.R.drawable.ic_menu_preferences, "Настройки", piSettings)
+            .build()
+
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(NOTIF_TTS_HELP_ID, n)
+    }
+
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
@@ -440,6 +554,18 @@ class VoiceService : Service() {
                 playPlayback()
                 Log.d(APPLICATION_NAME, "▶️ Продолжить")
             }
+            "время" -> {
+//                duckStart()
+                speakTime()
+//                duckStop()
+            }
+            "название" -> {
+//                duckStart()
+                speakNowPlaying()
+//                duckStop()
+            }
+
+
 
             else -> Log.d(APPLICATION_NAME, "Неизвестная команда: $text")
         }
@@ -568,7 +694,6 @@ class VoiceService : Service() {
         handler.removeCallbacks(commandTimeoutRunnable)
         duckStop() // <-- на всякий случай
 
-        super.onDestroy()
         audioRecord?.stop()
         audioRecord?.release()
         audioRecord = null
@@ -576,6 +701,60 @@ class VoiceService : Service() {
 
         soundPool?.release()
         soundPool = null
+
+        handler.removeCallbacksAndMessages(null) // опционально, если хочешь «обнулить очередь»
+
+        handler.post {
+            tts?.stop()
+            tts?.shutdown()
+            tts = null
+            ttsReady = false
+        }
+
+        super.onDestroy()
+    }
+
+    private fun speakNowPlaying() {
+        val controller = getTopMediaController()
+        if (controller == null) {
+            speak("Не вижу активный плеер", "cmd_title_none")
+            return
+        }
+
+        val md = controller.metadata
+        val title = md?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE)
+        val artist = md?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST)
+            ?: md?.getString(android.media.MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
+
+        val t = title?.takeIf { it.isNotBlank() }
+        val a = artist?.takeIf { it.isNotBlank() }
+
+        val phrase = when {
+            a != null && t != null -> "Сейчас играет: $a — $t"
+            t != null -> "Сейчас играет: $t"
+            else -> "Не удалось получить название трека"
+        }
+
+        speak(phrase, "cmd_title")
+    }
+
+
+    private fun speakTime() {
+        val now = LocalTime.now()
+        val hhmm = now.format(DateTimeFormatter.ofPattern("HH:mm"))
+        speak("Сейчас $hhmm", "cmd_time")
+    }
+
+
+    private fun speak(text: String, utteranceId: String) {
+        handler.post {
+            if (!ttsReady) {
+                Log.w(APPLICATION_NAME, "TTS not ready, skip: $text")
+                return@post
+            }
+            val params = Bundle()
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+        }
     }
 
 
