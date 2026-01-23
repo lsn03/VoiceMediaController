@@ -27,6 +27,8 @@ import ru.lsn03.voicemediacontroller.events.VoiceEvents
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.MODEL_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.VOICE_CHANNEL
+import ru.lsn03.voicemediacontroller.vosk.VoskEngine
+import ru.lsn03.voicemediacontroller.vosk.VoskResult
 import java.io.File
 import java.io.IOException
 import java.time.LocalTime
@@ -41,10 +43,11 @@ class VoiceService : Service() {
     private lateinit var commandRecognizer: Recognizer  // Полные команды
     private lateinit var wakeCommandRecognizer: Recognizer
     private lateinit var audioRecorder: AudioRecorder
+    private lateinit var vosk: VoskEngine
 
 
     companion object {
-        private val SAMPLE_RATE = 16000
+        val SAMPLE_RATE = 16000
         private val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
 
@@ -274,41 +277,12 @@ class VoiceService : Service() {
     }
 
     private fun initializeVoskModel() {
-        model = Model(modelPath())
-
-        // 👤 Wake word recognizer (маленькая грамматика)
-        //        wakeRecognizer = Recognizer(model, SAMPLE_RATE.toFloat(), """["джарвис"]""")
-        wakeRecognizer = Recognizer(model, SAMPLE_RATE.toFloat(), """["джарвис", "[unk]"]""")
-
-        // 🎵 Command recognizer (команды)
-        commandRecognizer = Recognizer(
-            model, SAMPLE_RATE.toFloat(),
-            """
-                    ["следующий трек","следующий", "предыдущий трек",
-                     "предыдущий", "некст","прев", "пауза", "стоп",
-                      "уменьши", "увеличь", "громче", "тише", "продолжить",
-                       "продолжи","возобнови","плей", "плэй", "играй",
-                       "старт", "стоп", "что за хуйня","че за хуйня", "время", "название"
-                       ]
-                       """
+        vosk = VoskEngine(
+            context = this,
+            sampleRate = SAMPLE_RATE,
+            modelPathProvider = { modelPath() }
         )
-
-        wakeCommandRecognizer = Recognizer(
-            model, SAMPLE_RATE.toFloat(),
-            """
-                            [
-                              "джарвис следующий трек", "джарвис следующий", "джарвис некст", "джарвис что за хуйня", "джарвис че за хуйня",
-                              "джарвис предыдущий трек", "джарвис предыдущий", "джарвис прев",
-                              "джарвис пауза", "джарвис стоп",
-                              "джарвис громче", "джарвис увеличь",
-                              "джарвис тише", "джарвис уменьши",
-                              "джарвис продолжи", "джарвис продолжить", "джарвис возобнови",
-                              "джарвис плей", "джарвис плэй", "джарвис играй", "джарвис старт",
-                              "джарвис время", "джарвис название",
-                              "[unk]"
-                            ]
-                            """.trimIndent()
-        )
+        vosk.start()
     }
 
     private fun initializeTts(): TextToSpeech = TextToSpeech(applicationContext) { status ->
@@ -436,75 +410,87 @@ class VoiceService : Service() {
 
     private fun handlePcm(pcm: ByteArray) {
         val now = SystemClock.elapsedRealtime()
+
         if (pendingResetToWake) {
             pendingResetToWake = false
+            Log.d(APPLICATION_NAME, "handlePcm: pendingResetToWake")
             resetToWakeModeInternal()
             return
         }
 
         if (pendingSwitchToCommand) {
             pendingSwitchToCommand = false
+            Log.d(APPLICATION_NAME, "handlePcm: pendingSwitchToCommand")
             switchToCommandModeInternal()
         }
 
         if (isListeningCommand) {
-            // ---------- РЕЖИМ КОМАНД ----------
-            if (commandRecognizer.acceptWaveForm(pcm, pcm.size)) {
-                val result = commandRecognizer.result
-                Log.d(APPLICATION_NAME, "VoiceService:: CMD result: $result")
-                handleCommand(result)
-            } else {
-                val partialText = parsePartial(commandRecognizer.partialResult).trim()
-                if (partialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
-                    lastUiUpdateMs = now
-                    publishRecognizedText("Команда: $partialText")
+            // ---------- COMMAND MODE ----------
+            when (val r = vosk.acceptCommand(pcm)) {
+                is VoskResult.Final -> {
+                    Log.d(APPLICATION_NAME, "VoiceService:: CMD final: ${r.text}")
+                    handleCommandText(r.text)
                 }
+                is VoskResult.Partial -> {
+                    val partialText = r.text.trim()
+                    if (partialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
+                        lastUiUpdateMs = now
+                        publishRecognizedText("Команда: $partialText")
+                    }
+                }
+                VoskResult.None -> Unit
             }
+
         } else {
-            // ---------- РЕЖИМ WAKE ----------
-            val isFinal = wakeCommandRecognizer.acceptWaveForm(pcm, pcm.size)
+            // ---------- WAKE MODE ----------
+            when (val r = vosk.acceptWake(pcm)) {
+                is VoskResult.Final -> {
+                    val txt = normalize(r.text)
+                    Log.d(APPLICATION_NAME, "VoiceService:: WAKE final: $txt")
 
-            if (isFinal) {
-                val txt = parseText(wakeCommandRecognizer.result).trim().lowercase()
+                    when {
+                        txt == "джарвис" -> {
+                            val now2 = SystemClock.elapsedRealtime()
+                            if (now2 - lastWakeTriggerMs >= WAKE_DEBOUNCE_MS) {
+                                lastWakeTriggerMs = now2
+                                publishRecognizedText("Джарвис! Слушаю команду...")
+                                playHappy()
+                                switchToCommandMode()
+                            } else {
+                                Log.d(APPLICATION_NAME, "Wake debounce: ignored")
+                            }
+                        }
 
-                when {
-                    txt == "джарвис" -> {
-                        val now2 = SystemClock.elapsedRealtime()
-                        if (now2 - lastWakeTriggerMs >= WAKE_DEBOUNCE_MS) {
-                            lastWakeTriggerMs = now2
-                            publishRecognizedText("Джарвис! Слушаю команду...")
-                            Log.d(APPLICATION_NAME, "VoiceService:: Услышал команду $txt")
+                        txt.startsWith("джарвис ") -> {
                             playHappy()
-                            switchToCommandMode()
+                            val cmd = txt.removePrefix("джарвис ").trim()
+                            Log.d(APPLICATION_NAME, "VoiceService:: WAKE cmd: $cmd")
+                            publishRecognizedText("Выполняю: $cmd")
 
+                            handleCommandText(cmd)
+
+                            // остаёмся в WAKE (а handleCommandText сам поставит pendingResetToWake
+                            // если ты внутри него вызываешь resetToWakeMode())
+                            vosk.resetWake()
+                        }
+
+                        else -> {
+                            // не наша фраза
+                            vosk.resetWake()
                         }
                     }
+                }
 
-                    txt.startsWith("джарвис ") -> {
-                        Log.d(APPLICATION_NAME, "VoiceService:: Услышал команду $txt")
-                        playHappy()
-                        // выполняем сразу, без переключения режима
-                        val cmd = txt.removePrefix("джарвис ").trim()
-                        publishRecognizedText("Выполняю: $cmd")
-                        handleCommand("""{"text":"$cmd"}""")  // лайфхак: переиспользуем handleCommand
-                        // остаёмся в WAKE
-                        wakeCommandRecognizer.reset()
-                    }
-
-                    else -> {
-                        // не наша фраза
-                        wakeCommandRecognizer.reset()
+                is VoskResult.Partial -> {
+                    val wakePartialText = r.text.trim()
+                    if (wakePartialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
+                        lastUiUpdateMs = now
+                        publishRecognizedText("Слышу: $wakePartialText")
                     }
                 }
-            } else {
-                // partial — только UI
-                val wakePartialText = parsePartial(wakeCommandRecognizer.partialResult).trim()
-                if (wakePartialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
-                    lastUiUpdateMs = now
-                    publishRecognizedText("Слышу: $wakePartialText")
-                }
+
+                VoskResult.None -> Unit
             }
-
         }
     }
 
@@ -512,9 +498,10 @@ class VoiceService : Service() {
 
     private fun switchToCommandModeInternal() {
         duckStart() // <-- ДО начала распознавания команды
-
         isListeningCommand = true
-        commandRecognizer.reset()
+
+        vosk.resetCommand()
+
         publishRecognizedText("Слушаю команду...")
         handler.removeCallbacks(commandTimeoutRunnable)
         handler.postDelayed(commandTimeoutRunnable, COMMAND_TIMEOUT_MS)
@@ -528,9 +515,8 @@ class VoiceService : Service() {
 
         duckStop() // <-- ВСЕГДА отпускаем фокус при выходе из команд
 
-        wakeRecognizer.reset()
-        commandRecognizer.reset()
-        wakeCommandRecognizer.reset()
+        vosk.resetCommand()
+        vosk.resetWake()
 
         playSad() //— оставь как тебе нужно (у тебя оно уже есть и тут, и в handleCommand)
         publishRecognizedText("Слушаю...")
@@ -550,25 +536,27 @@ class VoiceService : Service() {
     fun normalize(s: String) = s.trim().lowercase()
 
 
-    private fun handleCommand(resultJson: String) {
-        val text = normalize( parseText(resultJson))
-
+    private fun handleCommandText(cmd: String) {
+        val text = normalize(cmd)
         if (text.isEmpty()) {
-            Log.d(APPLICATION_NAME, "⚠️ Пустая команда (скорее всего тишина) — остаюсь в режиме команд")
-            // НЕ выходим в wake, пусть ещё слушает до таймаута
+            Log.d(APPLICATION_NAME, "Empty command text")
             return
         }
-
-        Log.d(APPLICATION_NAME, "✅ Выполняю команду: $text")
+        Log.d(APPLICATION_NAME, "Command text: $text")
         publishRecognizedText("Выполняю: $text")
 
         val action = matcher.match(text) ?: VoiceAction.UNKNOWN
-        Log.d(APPLICATION_NAME, "CurrentAction= $action")
-        executor.execute(action);
-
+        Log.d(APPLICATION_NAME, "Action=$action")
+        executor.execute(action)
 
         resetToWakeMode()
     }
+
+
+    private fun handleCommand(resultJson: String) {
+        handleCommandText(parseText(resultJson))
+    }
+
 
     private fun pausePlayback() {
         val controller = getTopMediaController()
