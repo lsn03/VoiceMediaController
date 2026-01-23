@@ -2,32 +2,25 @@ package ru.lsn03.voicemediacontroller.service
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.AlarmManager
-import android.app.Notification
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
+import android.app.*
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.os.Bundle
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
-import android.os.SystemClock
+import android.os.*
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
-import androidx.lifecycle.MutableLiveData
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
 import ru.lsn03.voicemediacontroller.R
+import ru.lsn03.voicemediacontroller.events.VoiceEvents
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.MODEL_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.VOICE_CHANNEL
@@ -35,7 +28,7 @@ import java.io.File
 import java.io.IOException
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
-import java.util.Locale
+import java.util.*
 
 
 class VoiceService : Service() {
@@ -46,11 +39,7 @@ class VoiceService : Service() {
     private lateinit var wakeCommandRecognizer: Recognizer
 
 
-
-
-
     companion object {
-        val recognizedText = MutableLiveData<String>("Слушаю...")
         private var audioRecord: AudioRecord? = null
         private val SAMPLE_RATE = 16000
         private val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
@@ -179,6 +168,12 @@ class VoiceService : Service() {
         return START_STICKY
     }
 
+    private fun publishRecognizedText(text: String) {
+        val intent = Intent(VoiceEvents.ACTION_RECOGNIZED_TEXT).apply {
+            putExtra(VoiceEvents.EXTRA_TEXT, text)
+        }
+        LocalBroadcastManager.getInstance(applicationContext).sendBroadcast(intent)
+    }
 
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, VOICE_CHANNEL)
@@ -364,7 +359,7 @@ class VoiceService : Service() {
             != PackageManager.PERMISSION_GRANTED
         ) {
             Log.e(APPLICATION_NAME, "No RECORD_AUDIO permission")
-            recognizedText.postValue("Нет разрешения на микрофон")
+            publishRecognizedText("Нет разрешения на микрофон")
             return
         }
 
@@ -418,7 +413,7 @@ class VoiceService : Service() {
                         val partialText = parsePartial(commandRecognizer.partialResult).trim()
                         if (partialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
                             lastUiUpdateMs = now
-                            recognizedText.postValue("Команда: $partialText")
+                            publishRecognizedText("Команда: $partialText")
                         }
                     }
                 } else {
@@ -433,7 +428,7 @@ class VoiceService : Service() {
                                 val now2 = SystemClock.elapsedRealtime()
                                 if (now2 - lastWakeTriggerMs >= WAKE_DEBOUNCE_MS) {
                                     lastWakeTriggerMs = now2
-                                    recognizedText.postValue("Джарвис! Слушаю команду...")
+                                    publishRecognizedText("Джарвис! Слушаю команду...")
                                     Log.d(APPLICATION_NAME, "VoiceService:: Услышал команду $txt")
                                     playHappy()
                                     switchToCommandMode()
@@ -446,7 +441,7 @@ class VoiceService : Service() {
                                 playHappy()
                                 // выполняем сразу, без переключения режима
                                 val cmd = txt.removePrefix("джарвис ").trim()
-                                recognizedText.postValue("Выполняю: $cmd")
+                                publishRecognizedText("Выполняю: $cmd")
                                 handleCommand("""{"text":"$cmd"}""")  // лайфхак: переиспользуем handleCommand
                                 // остаёмся в WAKE
                                 wakeCommandRecognizer.reset()
@@ -462,7 +457,7 @@ class VoiceService : Service() {
                         val wakePartialText = parsePartial(wakeCommandRecognizer.partialResult).trim()
                         if (wakePartialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
                             lastUiUpdateMs = now
-                            recognizedText.postValue("Слышу: $wakePartialText")
+                            publishRecognizedText("Слышу: $wakePartialText")
                         }
                     }
 
@@ -480,7 +475,7 @@ class VoiceService : Service() {
 
         isListeningCommand = true
         commandRecognizer.reset()
-        recognizedText.postValue("Слушаю команду...")
+        publishRecognizedText("Слушаю команду...")
         handler.removeCallbacks(commandTimeoutRunnable)
         handler.postDelayed(commandTimeoutRunnable, COMMAND_TIMEOUT_MS)
         Log.d(APPLICATION_NAME, "VoiceService::switchToCommandModeInternal")
@@ -498,7 +493,7 @@ class VoiceService : Service() {
         wakeCommandRecognizer.reset()
 
         playSad() //— оставь как тебе нужно (у тебя оно уже есть и тут, и в handleCommand)
-        recognizedText.postValue("Слушаю...")
+        publishRecognizedText("Слушаю...")
         Log.d(APPLICATION_NAME, "VoiceService::resetToWakeModeInternal")
     }
 
@@ -522,7 +517,7 @@ class VoiceService : Service() {
         }
 
         Log.d(APPLICATION_NAME, "✅ Выполняю команду: $text")
-        recognizedText.postValue("Выполняю: $text")
+        publishRecognizedText("Выполняю: $text")
 
         when (text.lowercase()) {
             "следующий трек", "некст", "следующий", "хуйня", "че за хуйня", "что за хуйня" -> {

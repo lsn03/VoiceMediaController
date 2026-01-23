@@ -5,8 +5,10 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -23,27 +25,31 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.getSystemService
-import androidx.lifecycle.Observer
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import ru.lsn03.voicemediacontroller.events.VoiceEvents
 import ru.lsn03.voicemediacontroller.service.VoiceService
 import ru.lsn03.voicemediacontroller.ui.theme.VoiceMediaControlTheme
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Slider
-import androidx.compose.ui.text.style.TextAlign
 
 class MainActivity : ComponentActivity() {
 
+    private var recognizedStatus by mutableStateOf("Нет текста")
+
+    private val voiceReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == VoiceEvents.ACTION_RECOGNIZED_TEXT) {
+                recognizedStatus = intent.getStringExtra(VoiceEvents.EXTRA_TEXT) ?: "Нет текста"
+            }
+        }
+    }
 
     private fun isNotificationAccessGranted(): Boolean {
         val nm = getSystemService(NotificationManager::class.java)
@@ -65,6 +71,20 @@ class MainActivity : ComponentActivity() {
         activity.startActivity(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        LocalBroadcastManager.getInstance(this).registerReceiver(
+            voiceReceiver,
+            IntentFilter(VoiceEvents.ACTION_RECOGNIZED_TEXT)
+        )
+    }
+
+    override fun onStop() {
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(voiceReceiver)
+        super.onStop()
+    }
+
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -81,32 +101,40 @@ class MainActivity : ComponentActivity() {
         setContent {
             VoiceMediaControlTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    VoiceControlScreen(modifier = Modifier.padding(innerPadding))
+                    VoiceControlScreen(
+                        modifier = Modifier.padding(innerPadding),
+                        recognizedStatus = recognizedStatus
+                    )
+
                 }
             }
         }
     }
 
-}
 
-private fun createNotificationChannel(context: Context) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val channel = NotificationChannel(
-            "voice_channel",
-            "Voice Control",
-            NotificationManager.IMPORTANCE_LOW
-        )
+    private fun createNotificationChannel(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                "voice_channel",
+                "Voice Control",
+                NotificationManager.IMPORTANCE_LOW
+            )
 
-        val systemService = getSystemService(context, NotificationManager::class.java)
-        systemService?.createNotificationChannel(channel)
+            val systemService = getSystemService(context, NotificationManager::class.java)
+            systemService?.createNotificationChannel(channel)
+
+        }
 
     }
 
 }
 
 
+
 @Composable
-fun VoiceControlScreen(modifier: Modifier = Modifier) {
+fun VoiceControlScreen(modifier: Modifier = Modifier,
+                       recognizedStatus: String
+) {
     val context = LocalContext.current
 
     val nm = remember { context.getSystemService(NotificationManager::class.java) }
@@ -118,7 +146,6 @@ fun VoiceControlScreen(modifier: Modifier = Modifier) {
     var listenerConnected by remember { mutableStateOf(false) }
 
 
-    val lifecycleOwner = LocalLifecycleOwner.current
     val scrollState = rememberScrollState()
 
     val prefs = remember { context.getSharedPreferences("jarvis_prefs", Context.MODE_PRIVATE) }
@@ -135,7 +162,6 @@ fun VoiceControlScreen(modifier: Modifier = Modifier) {
 
     var isRunning by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Остановлен") }
-    var recognizedStatus by remember { mutableStateOf("Нет текста") }
 
     val micPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -150,11 +176,13 @@ fun VoiceControlScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    DisposableEffect(lifecycleOwner) {
-        val observer = Observer<String> { text -> recognizedStatus = text }
-        VoiceService.recognizedText.observe(lifecycleOwner, observer)
-        onDispose { VoiceService.recognizedText.removeObserver(observer) }
-    }
+//    DisposableEffect(Unit) {
+//        val lbm = LocalBroadcastManager.getInstance(context)
+//
+//        lbm.registerReceiver(voiceReceiver, IntentFilter(VoiceEvents.ACTION_RECOGNIZED_TEXT))
+//        onDispose { lbm.unregisterReceiver(voiceReceiver) }
+//    }
+
 
     LaunchedEffect(Unit) {
         val granted = ContextCompat.checkSelfPermission(context, RECORD_AUDIO) ==

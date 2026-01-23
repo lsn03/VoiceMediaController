@@ -14,6 +14,7 @@ jna = "5.14.0"
 coroutines = "1.10.2"
 datastore = "1.2.0"
 lifecycle = "2.10.0"
+localbroadcastmanager = "1.1.0"
 
 
 [libraries]
@@ -37,7 +38,7 @@ jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
-
+androidx-localbroadcastmanager = { module = "androidx.localbroadcastmanager:localbroadcastmanager", version.ref = "localbroadcastmanager" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

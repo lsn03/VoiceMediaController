@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "ru.lsn03.voicemediacontroller"
-        minSdk = 26
+        minSdk = 29
         targetSdk = 35
         versionCode = 6
         versionName = "1.0.4"
@@ -54,6 +54,8 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 
+
+    implementation(libs.androidx.localbroadcastmanager)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
