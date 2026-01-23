@@ -11,6 +11,10 @@ composeBom = "2024.09.00"
 media3 = "1.4.1"
 vosk = "0.3.47"
 jna = "5.14.0"
+coroutines = "1.10.2"
+datastore = "1.2.0"
+lifecycle = "2.10.0"
+
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -30,6 +34,10 @@ androidx-material3 = { group = "androidx.compose.material3", name = "material3" 
 androidx-media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3" }
 vosk-android = { group = "com.alphacephei", name = "vosk-android", version.ref = "vosk" }
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
