@@ -6,11 +6,14 @@ import android.app.*
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.SoundPool
 import android.os.*
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -37,10 +40,10 @@ class VoiceService : Service() {
     private lateinit var wakeRecognizer: Recognizer  // Только "джарвис"
     private lateinit var commandRecognizer: Recognizer  // Полные команды
     private lateinit var wakeCommandRecognizer: Recognizer
+    private lateinit var audioRecorder: AudioRecorder
 
 
     companion object {
-        private var audioRecord: AudioRecord? = null
         private val SAMPLE_RATE = 16000
         private val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
@@ -189,88 +192,31 @@ class VoiceService : Service() {
         Log.i(APPLICATION_NAME, "VoiceService onCreate()")
         super.onCreate()
 
-        tts = TextToSpeech(applicationContext) { status ->
-            ttsReady = (status == TextToSpeech.SUCCESS)
 
-            Log.d(APPLICATION_NAME, "initialization TTS,status=$status")
-            if (ttsReady) {
-//                tts?.language = Locale("ru", "RU") // или Locale.getDefault()
-                tts?.language = Locale.getDefault()
-
-                tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String) {
-                        // onStart приходит не на main thread
-                        handler.post { duckStart() }
-                    }
-
-                    override fun onDone(utteranceId: String) {
-                        handler.post { duckStop() }
-                    }
-
-                    override fun onError(utteranceId: String) {
-                        handler.post { duckStop() }
-                    }
-                })
-
-            }
-            if (status != TextToSpeech.SUCCESS) {
-                Log.d(APPLICATION_NAME, "В системе не настроен движок синтеза речи. Нажми «Установить» или открой «Настройки».")
-                showTtsFixNotification("В системе не настроен движок синтеза речи. Нажми «Установить» или открой «Настройки».")
-            }
-
-        }
+        audioRecorder = AudioRecorder(sampleRate = SAMPLE_RATE)
 
 
+        tts = initializeTts()
 
-        model = Model(modelPath())
-
-        // 👤 Wake word recognizer (маленькая грамматика)
-//        wakeRecognizer = Recognizer(model, SAMPLE_RATE.toFloat(), """["джарвис"]""")
-        wakeRecognizer = Recognizer(model, SAMPLE_RATE.toFloat(), """["джарвис", "[unk]"]""")
-
-        // 🎵 Command recognizer (команды)
-        commandRecognizer = Recognizer(
-            model, SAMPLE_RATE.toFloat(),
-            """
-                ["следующий трек","следующий", "предыдущий трек",
-                 "предыдущий", "некст","прев", "пауза", "стоп",
-                  "уменьши", "увеличь", "громче", "тише", "продолжить",
-                   "продолжи","возобнови","плей", "плэй", "играй",
-                   "старт", "стоп", "что за хуйня","че за хуйня", "время", "название"
-                   ]
-                   """
-        )
-
-        wakeCommandRecognizer = Recognizer(
-            model, SAMPLE_RATE.toFloat(),
-            """
-                        [
-                          "джарвис следующий трек", "джарвис следующий", "джарвис некст", "джарвис что за хуйня", "джарвис че за хуйня",
-                          "джарвис предыдущий трек", "джарвис предыдущий", "джарвис прев",
-                          "джарвис пауза", "джарвис стоп",
-                          "джарвис громче", "джарвис увеличь",
-                          "джарвис тише", "джарвис уменьши",
-                          "джарвис продолжи", "джарвис продолжить", "джарвис возобнови",
-                          "джарвис плей", "джарвис плэй", "джарвис играй", "джарвис старт",
-                          "джарвис время", "джарвис название",
-                          "[unk]"
-                        ]
-                        """.trimIndent()
-        )
+        initializeVoskModel()
 
         // prefs
-        val sp = getSharedPreferences(PREFS, MODE_PRIVATE)
-        happyVol = sp.getFloat(KEY_HAPPY_VOL, 0.6f)
-        sadVol = sp.getFloat(KEY_SAD_VOL, 0.6f)
+        initializePref()
 
         // SoundPool
-        val attrs = android.media.AudioAttributes.Builder()
-            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+        initializeSoundPool()
+
+        startListening()
+    }
+
+    private fun initializeSoundPool() {
+        val attrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
 
 
-        soundPool = android.media.SoundPool.Builder()
+        soundPool = SoundPool.Builder()
             .setMaxStreams(2)
             .setAudioAttributes(attrs)
             .build()
@@ -282,9 +228,84 @@ class VoiceService : Service() {
         sndSad = soundPool!!.load(this, R.raw.end_water, 1)
 
         Log.d(APPLICATION_NAME, "SoundPool load ids: happy=$sndHappy sad=$sndSad")
+    }
 
+    private fun initializePref() {
+        val sp = getSharedPreferences(PREFS, MODE_PRIVATE)
+        happyVol = sp.getFloat(KEY_HAPPY_VOL, 0.6f)
+        sadVol = sp.getFloat(KEY_SAD_VOL, 0.6f)
+    }
 
-        startListening()
+    private fun initializeVoskModel() {
+        model = Model(modelPath())
+
+        // 👤 Wake word recognizer (маленькая грамматика)
+        //        wakeRecognizer = Recognizer(model, SAMPLE_RATE.toFloat(), """["джарвис"]""")
+        wakeRecognizer = Recognizer(model, SAMPLE_RATE.toFloat(), """["джарвис", "[unk]"]""")
+
+        // 🎵 Command recognizer (команды)
+        commandRecognizer = Recognizer(
+            model, SAMPLE_RATE.toFloat(),
+            """
+                    ["следующий трек","следующий", "предыдущий трек",
+                     "предыдущий", "некст","прев", "пауза", "стоп",
+                      "уменьши", "увеличь", "громче", "тише", "продолжить",
+                       "продолжи","возобнови","плей", "плэй", "играй",
+                       "старт", "стоп", "что за хуйня","че за хуйня", "время", "название"
+                       ]
+                       """
+        )
+
+        wakeCommandRecognizer = Recognizer(
+            model, SAMPLE_RATE.toFloat(),
+            """
+                            [
+                              "джарвис следующий трек", "джарвис следующий", "джарвис некст", "джарвис что за хуйня", "джарвис че за хуйня",
+                              "джарвис предыдущий трек", "джарвис предыдущий", "джарвис прев",
+                              "джарвис пауза", "джарвис стоп",
+                              "джарвис громче", "джарвис увеличь",
+                              "джарвис тише", "джарвис уменьши",
+                              "джарвис продолжи", "джарвис продолжить", "джарвис возобнови",
+                              "джарвис плей", "джарвис плэй", "джарвис играй", "джарвис старт",
+                              "джарвис время", "джарвис название",
+                              "[unk]"
+                            ]
+                            """.trimIndent()
+        )
+    }
+
+    private fun initializeTts(): TextToSpeech = TextToSpeech(applicationContext) { status ->
+        ttsReady = (status == TextToSpeech.SUCCESS)
+
+        Log.d(APPLICATION_NAME, "initialization TTS,status=$status")
+        if (ttsReady) {
+    //                tts?.language = Locale("ru", "RU") // или Locale.getDefault()
+            tts?.language = Locale.getDefault()
+
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String) {
+                    // onStart приходит не на main thread
+                    handler.post { duckStart() }
+                }
+
+                override fun onDone(utteranceId: String) {
+                    handler.post { duckStop() }
+                }
+
+                override fun onError(utteranceId: String) {
+                    handler.post { duckStop() }
+                }
+            })
+
+        }
+        if (status != TextToSpeech.SUCCESS) {
+            Log.d(
+                APPLICATION_NAME,
+                "В системе не настроен движок синтеза речи. Нажми «Установить» или открой «Настройки»."
+            )
+            showTtsFixNotification("В системе не настроен движок синтеза речи. Нажми «Установить» или открой «Настройки».")
+        }
+
     }
 
     private fun openTtsInstall() {
@@ -363,111 +384,93 @@ class VoiceService : Service() {
             return
         }
 
-        val listeningThread = Thread {
-            val bufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
-            audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                SAMPLE_RATE,
-                CHANNEL_CONFIG,
-                AUDIO_FORMAT,
-                bufferSize
-            )
-
-            audioRecord?.startRecording() ?: run {
-                Log.e(APPLICATION_NAME, "AudioRecord failed to init")
-                return@Thread
+        audioRecorder.start(
+            onPcm = { pcm ->
+                // сюда переносишь ВСЁ что ниже создания pcm в твоём коде:
+                // pendingResetToWake / pendingSwitchToCommand / isListeningCommand ...
+                handlePcm(pcm)
+            },
+            onError = { msg ->
+                Log.e(APPLICATION_NAME, msg)
+                publishRecognizedText(msg)
             }
+        )
+    }
 
-            val buffer = ShortArray(bufferSize / 2)
-
-            while (isRunning) {
-                val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
-                if (read <= 0) continue
-
-                val pcm = ByteArray(read * 2)
-                for (i in 0 until read) {
-                    pcm[i * 2] = (buffer[i].toInt() and 0x00ff).toByte()
-                    pcm[i * 2 + 1] = (buffer[i].toInt() shr 8).toByte()
-                }
-
-                val now = SystemClock.elapsedRealtime()
-
-                if (pendingResetToWake) {
-                    pendingResetToWake = false
-                    resetToWakeModeInternal()
-                    continue
-                }
-
-                if (pendingSwitchToCommand) {
-                    pendingSwitchToCommand = false
-                    switchToCommandModeInternal()
-                }
-
-                if (isListeningCommand) {
-                    // ---------- РЕЖИМ КОМАНД ----------
-                    if (commandRecognizer.acceptWaveForm(pcm, pcm.size)) {
-                        val result = commandRecognizer.result
-                        Log.d(APPLICATION_NAME, "VoiceService:: CMD result: $result")
-                        handleCommand(result)
-                    } else {
-                        val partialText = parsePartial(commandRecognizer.partialResult).trim()
-                        if (partialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
-                            lastUiUpdateMs = now
-                            publishRecognizedText("Команда: $partialText")
-                        }
-                    }
-                } else {
-                    // ---------- РЕЖИМ WAKE ----------
-                    val isFinal = wakeCommandRecognizer.acceptWaveForm(pcm, pcm.size)
-
-                    if (isFinal) {
-                        val txt = parseText(wakeCommandRecognizer.result).trim().lowercase()
-
-                        when {
-                            txt == "джарвис" -> {
-                                val now2 = SystemClock.elapsedRealtime()
-                                if (now2 - lastWakeTriggerMs >= WAKE_DEBOUNCE_MS) {
-                                    lastWakeTriggerMs = now2
-                                    publishRecognizedText("Джарвис! Слушаю команду...")
-                                    Log.d(APPLICATION_NAME, "VoiceService:: Услышал команду $txt")
-                                    playHappy()
-                                    switchToCommandMode()
-
-                                }
-                            }
-
-                            txt.startsWith("джарвис ") -> {
-                                Log.d(APPLICATION_NAME, "VoiceService:: Услышал команду $txt")
-                                playHappy()
-                                // выполняем сразу, без переключения режима
-                                val cmd = txt.removePrefix("джарвис ").trim()
-                                publishRecognizedText("Выполняю: $cmd")
-                                handleCommand("""{"text":"$cmd"}""")  // лайфхак: переиспользуем handleCommand
-                                // остаёмся в WAKE
-                                wakeCommandRecognizer.reset()
-                            }
-
-                            else -> {
-                                // не наша фраза
-                                wakeCommandRecognizer.reset()
-                            }
-                        }
-                    } else {
-                        // partial — только UI
-                        val wakePartialText = parsePartial(wakeCommandRecognizer.partialResult).trim()
-                        if (wakePartialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
-                            lastUiUpdateMs = now
-                            publishRecognizedText("Слышу: $wakePartialText")
-                        }
-                    }
-
-                }
-            }
+    private fun handlePcm(pcm: ByteArray) {
+        val now = SystemClock.elapsedRealtime()
+        if (pendingResetToWake) {
+            pendingResetToWake = false
+            resetToWakeModeInternal()
+            return
         }
 
-        listeningThread.name = "ListeningThread"
-        listeningThread.start()
+        if (pendingSwitchToCommand) {
+            pendingSwitchToCommand = false
+            switchToCommandModeInternal()
+        }
+
+        if (isListeningCommand) {
+            // ---------- РЕЖИМ КОМАНД ----------
+            if (commandRecognizer.acceptWaveForm(pcm, pcm.size)) {
+                val result = commandRecognizer.result
+                Log.d(APPLICATION_NAME, "VoiceService:: CMD result: $result")
+                handleCommand(result)
+            } else {
+                val partialText = parsePartial(commandRecognizer.partialResult).trim()
+                if (partialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
+                    lastUiUpdateMs = now
+                    publishRecognizedText("Команда: $partialText")
+                }
+            }
+        } else {
+            // ---------- РЕЖИМ WAKE ----------
+            val isFinal = wakeCommandRecognizer.acceptWaveForm(pcm, pcm.size)
+
+            if (isFinal) {
+                val txt = parseText(wakeCommandRecognizer.result).trim().lowercase()
+
+                when {
+                    txt == "джарвис" -> {
+                        val now2 = SystemClock.elapsedRealtime()
+                        if (now2 - lastWakeTriggerMs >= WAKE_DEBOUNCE_MS) {
+                            lastWakeTriggerMs = now2
+                            publishRecognizedText("Джарвис! Слушаю команду...")
+                            Log.d(APPLICATION_NAME, "VoiceService:: Услышал команду $txt")
+                            playHappy()
+                            switchToCommandMode()
+
+                        }
+                    }
+
+                    txt.startsWith("джарвис ") -> {
+                        Log.d(APPLICATION_NAME, "VoiceService:: Услышал команду $txt")
+                        playHappy()
+                        // выполняем сразу, без переключения режима
+                        val cmd = txt.removePrefix("джарвис ").trim()
+                        publishRecognizedText("Выполняю: $cmd")
+                        handleCommand("""{"text":"$cmd"}""")  // лайфхак: переиспользуем handleCommand
+                        // остаёмся в WAKE
+                        wakeCommandRecognizer.reset()
+                    }
+
+                    else -> {
+                        // не наша фраза
+                        wakeCommandRecognizer.reset()
+                    }
+                }
+            } else {
+                // partial — только UI
+                val wakePartialText = parsePartial(wakeCommandRecognizer.partialResult).trim()
+                if (wakePartialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
+                    lastUiUpdateMs = now
+                    publishRecognizedText("Слышу: $wakePartialText")
+                }
+            }
+
+        }
     }
+
 
 
     private fun switchToCommandModeInternal() {
@@ -689,10 +692,7 @@ class VoiceService : Service() {
         handler.removeCallbacks(commandTimeoutRunnable)
         duckStop() // <-- на всякий случай
 
-        audioRecord?.stop()
-        audioRecord?.release()
-        audioRecord = null
-        isRunning = false
+        audioRecorder.stop()
 
         soundPool?.release()
         soundPool = null
