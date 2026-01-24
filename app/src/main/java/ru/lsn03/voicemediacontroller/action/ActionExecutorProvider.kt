@@ -12,16 +12,20 @@ class ActionExecutorProvider(
     nowPlayingGateway: NowPlayingGateway
 ) {
 
-    val providers: List<ActionExecutor> = listOf(
-        NextTrackActionExecutorImpl(mediaControlGateway),
-        PrevTrackActionExecutorImpl(mediaControlGateway),
-        SayTimeActionExecutorImpl(speechGateway),
-        SayTitleActionExecutorImpl(speechGateway, nowPlayingGateway ),
-        StartActionExecutorImpl(mediaControlGateway),
-        StopActionExecutorImpl(mediaControlGateway),
-        UnknownActionExecutorImpl(),
-        VolumeDownActionExecutorImpl(audioManagerControllerProvider),
-        VolumeUpActionExecutorImpl(audioManagerControllerProvider)
+    private val providers: Map<VoiceAction, ActionExecutor> = mapOf(
+        VoiceAction.NEXT to NextTrackActionExecutorImpl(mediaControlGateway),
+        VoiceAction.PREV to PrevTrackActionExecutorImpl(mediaControlGateway),
+        VoiceAction.SAY_TIME to SayTimeActionExecutorImpl(speechGateway),
+        VoiceAction.SAY_TITLE to SayTitleActionExecutorImpl(speechGateway, nowPlayingGateway),
+        VoiceAction.START to StartActionExecutorImpl(mediaControlGateway),
+        VoiceAction.STOP to StopActionExecutorImpl(mediaControlGateway),
+        VoiceAction.UNKNOWN to UnknownActionExecutorImpl(),
+        VoiceAction.VOLUME_DOWN to VolumeDownActionExecutorImpl(audioManagerControllerProvider),
+        VoiceAction.VOLUME_UP to VolumeUpActionExecutorImpl(audioManagerControllerProvider)
     )
+
+    fun getExecutor(action: VoiceAction): ActionExecutor {
+        return providers[action] ?: providers.getValue(VoiceAction.UNKNOWN);
+    }
 
 }

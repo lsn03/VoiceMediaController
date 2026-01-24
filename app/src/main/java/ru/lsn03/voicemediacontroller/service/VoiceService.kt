@@ -6,7 +6,10 @@ import android.app.*
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.media.*
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.media.SoundPool
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -24,15 +27,12 @@ import ru.lsn03.voicemediacontroller.action.ActionExecutorProvider
 import ru.lsn03.voicemediacontroller.action.VoiceAction
 import ru.lsn03.voicemediacontroller.audio.AudioManagerControllerProvider
 import ru.lsn03.voicemediacontroller.audio.AudioManagerControllerProviderImpl
+import ru.lsn03.voicemediacontroller.audio.ducker.AudioDucker
+import ru.lsn03.voicemediacontroller.audio.ducker.AudioDuckerImpl
 import ru.lsn03.voicemediacontroller.command.CommandBinding
 import ru.lsn03.voicemediacontroller.command.CommandMatcher
 import ru.lsn03.voicemediacontroller.events.VoiceEvents
-import ru.lsn03.voicemediacontroller.media.MediaControlGateway
-import ru.lsn03.voicemediacontroller.media.MediaControlGatewayImpl
-import ru.lsn03.voicemediacontroller.media.MediaControllerProvider
-import ru.lsn03.voicemediacontroller.media.MediaControllerProviderImpl
-import ru.lsn03.voicemediacontroller.media.NowPlayingGateway
-import ru.lsn03.voicemediacontroller.media.NowPlayingGatewayImpl
+import ru.lsn03.voicemediacontroller.media.*
 import ru.lsn03.voicemediacontroller.tts.SpeechGateway
 import ru.lsn03.voicemediacontroller.tts.SpeechGatewayImpl
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
@@ -52,6 +52,8 @@ class VoiceService : Service() {
     private lateinit var mediaControllerProvider: MediaControllerProvider
     private lateinit var speechGateway: SpeechGateway
     private lateinit var nowPlayingGateway: NowPlayingGateway
+    private lateinit var audioManager: AudioManager
+    private lateinit var audioDucker: AudioDucker
 
     companion object {
         val SAMPLE_RATE = 16000
@@ -93,10 +95,6 @@ class VoiceService : Service() {
             Log.d(APPLICATION_NAME, "VoiceService::commandTimeoutRunnable Таймаут команд, назад к wake")
             resetToWakeMode()
         }
-    }
-
-    private val audioManager by lazy {
-        getSystemService(AUDIO_SERVICE) as AudioManager
     }
 
 
@@ -199,6 +197,7 @@ class VoiceService : Service() {
 
         audioRecorder = AudioRecorder(sampleRate = SAMPLE_RATE)
 
+
         tts = initializeTts()
 
         initializeActionExecutorProvider()
@@ -230,6 +229,10 @@ class VoiceService : Service() {
             speechGateway,
             nowPlayingGateway
         )
+
+        audioManager = audioManagerControllerProvider.getAudioManager()
+
+        audioDucker = AudioDuckerImpl(audioManager, handler)
     }
 
     private fun initializeSoundPool() {
@@ -287,15 +290,15 @@ class VoiceService : Service() {
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String) {
                     // onStart приходит не на main thread
-                    handler.post { duckStart() }
+                    handler.post { audioDucker.start() }
                 }
 
                 override fun onDone(utteranceId: String) {
-                    handler.post { duckStop() }
+                    handler.post { audioDucker.stop() }
                 }
 
                 override fun onError(utteranceId: String) {
-                    handler.post { duckStop() }
+                    handler.post { audioDucker.stop() }
                 }
             })
 
@@ -397,7 +400,7 @@ class VoiceService : Service() {
 
 
     private fun switchToCommandModeInternal() {
-        duckStart() // <-- ДО начала распознавания команды
+        audioDucker.start() // <-- ДО начала распознавания команды
         isListeningCommand = true
 
         vosk.resetCommand()
@@ -413,7 +416,7 @@ class VoiceService : Service() {
         isListeningCommand = false
         handler.removeCallbacks(commandTimeoutRunnable)
 
-        duckStop() // <-- ВСЕГДА отпускаем фокус при выходе из команд
+        audioDucker.stop() // <-- ВСЕГДА отпускаем фокус при выходе из команд
 
         vosk.resetCommand()
         vosk.resetWake()
@@ -439,8 +442,7 @@ class VoiceService : Service() {
         val action = matcher.match(text) ?: VoiceAction.UNKNOWN
         Log.d(APPLICATION_NAME, "Action=$action")
 
-        val exec = actionExecutorProvider.providers.firstOrNull { it.getAction() == action }
-            ?: actionExecutorProvider.providers.first { it.getAction() == VoiceAction.UNKNOWN }
+        val exec = actionExecutorProvider.getExecutor(action)
 
         exec.execute()
 
@@ -462,8 +464,10 @@ class VoiceService : Service() {
     }
 
     override fun onDestroy() {
+        super.onDestroy()
+
         handler.removeCallbacks(commandTimeoutRunnable)
-        duckStop() // <-- на всякий случай
+        audioDucker.stop() // <-- на всякий случай
 
         audioRecorder.stop()
 
@@ -478,45 +482,7 @@ class VoiceService : Service() {
             tts = null
             ttsReady = false
         }
-
-        super.onDestroy()
     }
-
-    private fun duckStart() {
-        if (duckActive) return
-
-        val req = AudioFocusRequest.Builder(
-            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
-        )
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            .setOnAudioFocusChangeListener(afListener)
-            .build()
-
-        val granted = audioManager.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        Log.d(APPLICATION_NAME, "duckStart granted=$granted")
-
-        if (granted) {
-            focusReq = req
-            duckActive = true
-        }
-    }
-
-    private fun duckStop() {
-        val req = focusReq ?: run {
-            duckActive = false
-            return
-        }
-        audioManager.abandonAudioFocusRequest(req)
-        focusReq = null
-        duckActive = false
-        Log.d(APPLICATION_NAME, "duckStop")
-    }
-
 
     override fun onBind(intent: Intent?): IBinder? {
         TODO("Not yet implemented")
