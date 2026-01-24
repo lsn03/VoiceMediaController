@@ -2,19 +2,20 @@ package ru.lsn03.voicemediacontroller.service
 
 import android.os.SystemClock
 import android.util.Log
+import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPoolProvider
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 import ru.lsn03.voicemediacontroller.vosk.VoskResult
 
 class VoiceCoordinator(
     private val vosk: VoskEngine,
+    private val soundPoolProvider: SoundPoolProvider,
     private val handleCommandText: (String) -> Unit,
     private val publishRecognizedText: (String) -> Unit,
-    private val playHappy: () -> Unit,
     private val switchToCommandModeInternal: () -> Unit,
     private val resetToWakeModeInternal: () -> Unit,
 
-) {
+    ) {
 
     @Volatile
     private var pendingResetToWake = false
@@ -82,7 +83,7 @@ class VoiceCoordinator(
                             if (now2 - lastWakeTriggerMs >= WAKE_DEBOUNCE_MS) {
                                 lastWakeTriggerMs = now2
                                 publishRecognizedText("Джарвис! Слушаю команду...")
-                                playHappy()
+                                soundPoolProvider.playHappy()
                                 switchToCommandMode()
                             } else {
                                 Log.d(APPLICATION_NAME, "Wake debounce: ignored")
@@ -90,7 +91,7 @@ class VoiceCoordinator(
                         }
 
                         txt.startsWith("джарвис ") -> {
-                            playHappy()
+                            soundPoolProvider.playHappy()
                             val cmd = txt.removePrefix("джарвис ").trim()
                             Log.d(APPLICATION_NAME, "VoiceService:: WAKE cmd: $cmd")
                             publishRecognizedText("Выполняю: $cmd")
