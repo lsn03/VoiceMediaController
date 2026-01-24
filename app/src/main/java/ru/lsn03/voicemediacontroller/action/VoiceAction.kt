@@ -1,4 +1,4 @@
-package ru.lsn03.voicemediacontroller.service
+package ru.lsn03.voicemediacontroller.action
 
 enum class VoiceAction (val description: String) {
 
