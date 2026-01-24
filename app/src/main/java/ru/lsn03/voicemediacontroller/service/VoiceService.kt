@@ -7,7 +7,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
-import android.media.AudioManager
 import android.media.SoundPool
 import android.os.Handler
 import android.os.IBinder
@@ -21,25 +20,26 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import dagger.hilt.android.AndroidEntryPoint
 import ru.lsn03.voicemediacontroller.R
 import ru.lsn03.voicemediacontroller.action.ActionExecutorProvider
 import ru.lsn03.voicemediacontroller.action.VoiceAction
 import ru.lsn03.voicemediacontroller.audio.AudioManagerControllerProvider
-import ru.lsn03.voicemediacontroller.audio.AudioManagerControllerProviderImpl
 import ru.lsn03.voicemediacontroller.audio.ducker.AudioDucker
-import ru.lsn03.voicemediacontroller.audio.ducker.AudioDuckerImpl
 import ru.lsn03.voicemediacontroller.command.CommandBinding
 import ru.lsn03.voicemediacontroller.command.CommandMatcher
 import ru.lsn03.voicemediacontroller.events.VoiceEvents
-import ru.lsn03.voicemediacontroller.media.*
+import ru.lsn03.voicemediacontroller.media.MediaControlGateway
+import ru.lsn03.voicemediacontroller.media.NowPlayingGateway
 import ru.lsn03.voicemediacontroller.tts.SpeechGateway
 import ru.lsn03.voicemediacontroller.tts.SpeechGatewayImpl
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.VOICE_CHANNEL
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 import java.util.*
+import javax.inject.Inject
 
-
+@AndroidEntryPoint
 class VoiceService : Service() {
 
     companion object {
@@ -54,17 +54,29 @@ class VoiceService : Service() {
 
     }
 
-    private lateinit var audioRecorder: AudioRecorder
-    private lateinit var vosk: VoskEngine
     private lateinit var voiceCoordinator: VoiceCoordinator
-    private lateinit var audioManagerControllerProvider: AudioManagerControllerProvider
+
     private lateinit var actionExecutorProvider: ActionExecutorProvider
-    private lateinit var mediaControlGateway: MediaControlGateway
-    private lateinit var mediaControllerProvider: MediaControllerProvider
     private lateinit var speechGateway: SpeechGateway
-    private lateinit var nowPlayingGateway: NowPlayingGateway
-    private lateinit var audioManager: AudioManager
-    private lateinit var audioDucker: AudioDucker
+
+
+    @Inject
+    lateinit var audioRecorder: AudioRecorder
+
+    @Inject
+    lateinit var vosk: VoskEngine
+
+    @Inject
+    lateinit var nowPlayingGateway: NowPlayingGateway
+
+    @Inject
+    lateinit var mediaControlGateway: MediaControlGateway
+
+    @Inject
+    lateinit var audioManagerControllerProvider: AudioManagerControllerProvider
+
+    @Inject
+    lateinit var audioDucker: AudioDucker
 
     private var isListeningCommand = false
     private var tts: TextToSpeech? = null
@@ -161,10 +173,6 @@ class VoiceService : Service() {
         super.onCreate()
 
 
-        audioRecorder = AudioRecorder(sampleRate = SAMPLE_RATE)
-
-
-        initializeAudioDucker()
 
         tts = initializeTts()
 
@@ -312,9 +320,6 @@ class VoiceService : Service() {
             ttsProvider = { tts }
         )
 
-        mediaControllerProvider = MediaControllerProviderImpl(this)
-        nowPlayingGateway = NowPlayingGatewayImpl(mediaControllerProvider)
-        mediaControlGateway = MediaControlGatewayImpl(mediaControllerProvider)
         actionExecutorProvider = ActionExecutorProvider(
             audioManagerControllerProvider,
             mediaControlGateway,
@@ -353,10 +358,6 @@ class VoiceService : Service() {
     }
 
     private fun initializeVoskModel() {
-        vosk = VoskEngine(
-            context = this,
-            sampleRate = SAMPLE_RATE
-        )
         vosk.start()
 
         voiceCoordinator = VoiceCoordinator(
@@ -468,12 +469,6 @@ class VoiceService : Service() {
     private fun playSad() {
         val id = soundPool?.play(sndSad, sadVol, sadVol, 1, 0, 1f) ?: 0
         Log.d(APPLICATION_NAME, "VoiceService::playSad soundId=$sndSad streamId=$id vol=$sadVol")
-    }
-
-    private fun initializeAudioDucker() {
-        audioManagerControllerProvider = AudioManagerControllerProviderImpl(this)
-        audioManager = audioManagerControllerProvider.getAudioManager()
-        audioDucker = AudioDuckerImpl(audioManager, handler)
     }
 
 }
