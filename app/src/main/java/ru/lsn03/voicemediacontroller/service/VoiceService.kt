@@ -31,11 +31,13 @@ import ru.lsn03.voicemediacontroller.media.MediaControlGateway
 import ru.lsn03.voicemediacontroller.media.NowPlayingGateway
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.VOICE_CHANNEL
+import ru.lsn03.voicemediacontroller.voice.VoiceCoordinator
+import ru.lsn03.voicemediacontroller.voice.VoiceEffects
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 import javax.inject.Inject
 
 @AndroidEntryPoint
-class VoiceService : Service() {
+class VoiceService : Service(), VoiceEffects {
 
     companion object {
         val SAMPLE_RATE = 16000
@@ -82,16 +84,12 @@ class VoiceService : Service() {
     @Inject
     lateinit var audioDucker: AudioDucker
 
-    private var isListeningCommand = false
-
     @Inject
     lateinit var handler: Handler
 
     private val commandTimeoutRunnable = Runnable {
-        if (isListeningCommand) {
-            Log.d(APPLICATION_NAME, "VoiceService::commandTimeoutRunnable Таймаут команд, назад к wake")
-            resetToWakeMode()
-        }
+        Log.d(APPLICATION_NAME, "VoiceService::commandTimeoutRunnable Таймаут команд, назад к wake")
+        voiceCoordinator.onTimeout()
     }
 
 
@@ -211,6 +209,42 @@ class VoiceService : Service() {
         TODO("Not yet implemented")
     }
 
+    override fun publishText(text: String) {
+        publishRecognizedText(text)
+    }
+
+    override fun onFinalCommand(text: String) {
+        handleCommandText(text)
+    }
+
+    override fun enterWake() {
+        audioDucker.stop()
+        vosk.resetCommand()
+        vosk.resetWake()
+        soundPoolProvider.playSad()
+        publishRecognizedText("Слушаю...")
+        Log.d(APPLICATION_NAME, "VoiceService::enterWake")
+    }
+
+
+    override fun enterCommand() {
+        audioDucker.start()
+        vosk.resetCommand()
+        soundPoolProvider.playHappy()
+        publishRecognizedText("Слушаю команду...")
+        Log.d(APPLICATION_NAME, "VoiceService::enterCommand")
+    }
+
+    override fun scheduleCommandTimeout() {
+        handler.removeCallbacks(commandTimeoutRunnable)
+        handler.postDelayed(commandTimeoutRunnable, COMMAND_TIMEOUT_MS)
+    }
+
+    override fun cancelCommandTimeout() {
+        handler.removeCallbacks(commandTimeoutRunnable)
+
+    }
+
     @SuppressLint("MissingPermission")
     private fun startListening() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
@@ -229,35 +263,6 @@ class VoiceService : Service() {
             }
         )
     }
-
-
-    private fun switchToCommandModeInternal() {
-        audioDucker.start()
-        isListeningCommand = true
-
-        vosk.resetCommand()
-
-        publishRecognizedText("Слушаю команду...")
-        handler.removeCallbacks(commandTimeoutRunnable)
-        handler.postDelayed(commandTimeoutRunnable, COMMAND_TIMEOUT_MS)
-        Log.d(APPLICATION_NAME, "VoiceService::switchToCommandModeInternal")
-    }
-
-
-    private fun resetToWakeModeInternal() {
-        isListeningCommand = false
-        handler.removeCallbacks(commandTimeoutRunnable)
-
-        audioDucker.stop()
-
-        vosk.resetCommand()
-        vosk.resetWake()
-
-        soundPoolProvider.playSad()
-        publishRecognizedText("Слушаю...")
-        Log.d(APPLICATION_NAME, "VoiceService::resetToWakeModeInternal")
-    }
-
 
     private fun normalize(s: String) = s.trim().lowercase()
 
@@ -278,7 +283,7 @@ class VoiceService : Service() {
 
         exec.execute()
 
-        resetToWakeMode()
+        voiceCoordinator.onTimeout()
     }
 
     private fun publishRecognizedText(text: String) {
@@ -304,17 +309,8 @@ class VoiceService : Service() {
 
         voiceCoordinator = VoiceCoordinator(
             vosk,
-            soundPoolProvider = soundPoolProvider,
-            handleCommandText = ::handleCommandText,
-            publishRecognizedText = ::publishRecognizedText,
-            switchToCommandModeInternal = ::switchToCommandModeInternal,
-            resetToWakeModeInternal = ::resetToWakeModeInternal,
+            this
         )
-    }
-
-
-    private fun resetToWakeMode() {
-        voiceCoordinator.resetToWakeMode()
     }
 
 }
