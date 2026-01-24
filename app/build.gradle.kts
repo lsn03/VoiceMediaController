@@ -65,6 +65,14 @@ dependencies {
     debugImplementation(libs.androidx.ui.test.manifest)
 
 
+
+    // Навигация
+    implementation(libs.androidx.navigation.compose)
+    // ViewModel в Compose
+    implementation(libs.androidx.lifecycle.viewmodel.compose.v285)
+    // (Опционально) если будешь делать @HiltViewModel и hiltViewModel()
+    implementation(libs.androidx.hilt.navigation.compose)
+
     implementation(libs.androidx.localbroadcastmanager)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.datastore.preferences)
