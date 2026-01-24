@@ -95,16 +95,11 @@ class VoiceService : Service() {
     }
 
     private var soundPool: SoundPool? = null
-    private var sndHappy = 0
-    private var sndSad = 0
-
     private var happyVol = 0.6f
     private var sadVol = 0.6f
 
-    private val PREFS = "jarvis_prefs"
     private val KEY_HAPPY_VOL = "happy_vol"
     private val KEY_SAD_VOL = "sad_vol"
-
 
     private val matcher by lazy {
         CommandMatcher(
@@ -154,11 +149,11 @@ class VoiceService : Service() {
             }
 
             ACTION_OPEN_TTS_INSTALL -> {
-                openTtsInstall()
+              ttsManager.openTtsInstall()
             }
 
             ACTION_OPEN_TTS_SETTINGS -> {
-                openTtsSettings()
+                ttsManager. openTtsSettings()
             }
         }
 
@@ -177,8 +172,7 @@ class VoiceService : Service() {
 
         ttsManager.init(
             onStart = { audioDucker.start() },
-            onStop = { audioDucker.stop() },
-            onNoTts = { showTtsFixNotification("В системе не настроен движок синтеза речи...") }
+            onStop = { audioDucker.stop() }
         )
 
         initializeVoskModel()
@@ -311,66 +305,14 @@ class VoiceService : Service() {
 
         voiceCoordinator = VoiceCoordinator(
             vosk,
-            ::handleCommandText,
+            soundPoolProvider = soundPoolProvider,
+            handleCommandText = ::handleCommandText,
             publishRecognizedText = ::publishRecognizedText,
-            playHappy = soundPoolProvider::playHappy,
             switchToCommandModeInternal = ::switchToCommandModeInternal,
             resetToWakeModeInternal = ::resetToWakeModeInternal,
         )
     }
 
-    private fun openTtsInstall() {
-        val i = Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        try {
-            startActivity(i)
-        } catch (e: Exception) {
-            Log.e(APPLICATION_NAME, "No activity for ACTION_INSTALL_TTS_DATA", e)
-            openTtsSettings()
-        }
-    }
-
-    private fun openTtsSettings() {
-        val i = Intent("com.android.settings.TTS_SETTINGS").apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        try {
-            startActivity(i)
-        } catch (e: Exception) {
-            // Фоллбэк на общие настройки
-            startActivity(Intent(Settings.ACTION_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            })
-        }
-    }
-
-    private fun showTtsFixNotification(reason: String) {
-        val installIntent = Intent(this, VoiceService::class.java).apply { action = ACTION_OPEN_TTS_INSTALL }
-        val settingsIntent = Intent(this, VoiceService::class.java).apply { action = ACTION_OPEN_TTS_SETTINGS }
-
-        val piInstall = PendingIntent.getService(
-            this, 2001, installIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val piSettings = PendingIntent.getService(
-            this, 2002, settingsIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val n = NotificationCompat.Builder(this, VOICE_CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle("Нужен синтез речи (TTS)")
-            .setContentText(reason)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .addAction(android.R.drawable.ic_menu_save, "Установить", piInstall)
-            .addAction(android.R.drawable.ic_menu_preferences, "Настройки", piSettings)
-            .build()
-
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.notify(NOTIF_TTS_HELP_ID, n)
-    }
 
     private fun resetToWakeMode() {
         voiceCoordinator.resetToWakeMode()
