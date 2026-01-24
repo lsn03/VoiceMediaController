@@ -5,6 +5,7 @@ plugins {
 
     alias(libs.plugins.hilt)
     kotlin("kapt")
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -73,6 +74,8 @@ dependencies {
     implementation(libs.hilt.android)
     kapt(libs.hilt.compiler)
     implementation("com.squareup:javapoet:1.13.0")
-
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
 
 }

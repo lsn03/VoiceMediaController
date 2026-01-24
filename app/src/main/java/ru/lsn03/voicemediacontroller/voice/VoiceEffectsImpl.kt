@@ -2,14 +2,14 @@ package ru.lsn03.voicemediacontroller.voice
 
 import android.content.Context
 import android.content.Intent
-import android.os.Handler
 import android.util.Log
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import ru.lsn03.voicemediacontroller.action.ActionExecutorProvider
 import ru.lsn03.voicemediacontroller.action.VoiceAction
 import ru.lsn03.voicemediacontroller.audio.ducker.AudioDucker
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPoolProvider
-import ru.lsn03.voicemediacontroller.command.CommandBinding
 import ru.lsn03.voicemediacontroller.command.CommandMatcher
 import ru.lsn03.voicemediacontroller.events.VoiceEvents
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
@@ -21,28 +21,23 @@ class VoiceEffectsImpl(
     private val audioDucker: AudioDucker,
     private val vosk: VoskEngine,
     private val soundPoolProvider: SoundPoolProvider,
+    private val repo: VoiceCommandRepository,
 ) : VoiceEffects {
 
-    private val matcher by lazy {
-        CommandMatcher(
-            listOf(
-                CommandBinding(
-                    listOf("следующий трек", "следующий", "некст", "че за хуйня", "что за хуйня"),
-                    VoiceAction.NEXT
-                ),
-                CommandBinding(listOf("предыдущий трек", "предыдущий", "прев"), VoiceAction.PREV),
-                CommandBinding(listOf("пауза", "стоп"), VoiceAction.STOP),
-                CommandBinding(
-                    listOf("продолжи", "продолжить", "возобнови", "плей", "плэй", "играй", "старт"),
-                    VoiceAction.START
-                ),
-                CommandBinding(listOf("тише", "уменьши"), VoiceAction.VOLUME_DOWN),
-                CommandBinding(listOf("громче", "увеличь"), VoiceAction.VOLUME_UP),
-                CommandBinding(listOf("время"), VoiceAction.SAY_TIME),
-                CommandBinding(listOf("название"), VoiceAction.SAY_TITLE),
-            )
-        )
+    @Volatile
+    private var matcher: CommandMatcher = CommandMatcher(emptyList())
+
+    fun startDbMatcher(scope: CoroutineScope) {
+        scope.launch {
+            repo.observeBindings().collect { bindings ->
+                Log.d(APPLICATION_NAME, "Matcher updated: bindings=${bindings}")
+                matcher = CommandMatcher(bindings)
+                Log.d(APPLICATION_NAME, "matcher set id=${System.identityHashCode(matcher)} size=${bindings.size}")
+            }
+        }
     }
+
+    override fun start(scope: CoroutineScope) = startDbMatcher(scope)
 
     override fun publishText(text: String) {
         val intent = Intent(VoiceEvents.ACTION_RECOGNIZED_TEXT).apply {
