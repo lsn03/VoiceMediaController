@@ -219,6 +219,7 @@ class VoiceService : Service() {
             isReady = { ttsReady },
             ttsProvider = { tts }
         )
+
         mediaControllerProvider = MediaControllerProviderImpl(this)
         nowPlayingGateway = NowPlayingGatewayImpl(mediaControllerProvider)
         mediaControlGateway = MediaControlGatewayImpl(mediaControllerProvider)
@@ -451,6 +452,7 @@ class VoiceService : Service() {
 
     private fun resetToWakeMode() {
         pendingResetToWake = true
+        voiceCoordinator.resetToWakeMode()
     }
 
     private fun playHappy() {

@@ -130,10 +130,8 @@ class VoiceCoordinator(
         pendingSwitchToCommand = true
     }
 
-    private fun resetToWakeMode() {
+    fun resetToWakeMode() {
         pendingResetToWake = true
     }
-
-
 
 }
