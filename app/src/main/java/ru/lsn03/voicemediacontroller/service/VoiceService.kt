@@ -2,16 +2,16 @@ package ru.lsn03.voicemediacontroller.service
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.*
+import android.app.AlarmManager
+import android.app.Notification
+import android.app.PendingIntent
+import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.media.SoundPool
 import android.os.Handler
 import android.os.IBinder
 import android.os.SystemClock
-import android.provider.Settings
-import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -45,7 +45,7 @@ class VoiceService : Service() {
 
         const val ACTION_OPEN_TTS_INSTALL = "ru.lsn03.voicemediacontroller.action.OPEN_TTS_INSTALL"
         const val ACTION_OPEN_TTS_SETTINGS = "ru.lsn03.voicemediacontroller.action.OPEN_TTS_SETTINGS"
-        const val NOTIF_TTS_HELP_ID = 2     // отдельная нотификация-помощник
+        const val NOTIF_TTS_HELP_ID = 2
 
     }
 
@@ -94,7 +94,7 @@ class VoiceService : Service() {
         }
     }
 
-    private var soundPool: SoundPool? = null
+
     private var happyVol = 0.6f
     private var sadVol = 0.6f
 
@@ -122,7 +122,7 @@ class VoiceService : Service() {
         )
     }
 
-    private val COMMAND_TIMEOUT_MS = 10000L  // 10 секунд
+    private val COMMAND_TIMEOUT_MS = 10000L
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         intent?.extras?.let { b ->
@@ -149,11 +149,11 @@ class VoiceService : Service() {
             }
 
             ACTION_OPEN_TTS_INSTALL -> {
-              ttsManager.openTtsInstall()
+                ttsManager.openTtsInstall()
             }
 
             ACTION_OPEN_TTS_SETTINGS -> {
-                ttsManager. openTtsSettings()
+                ttsManager.openTtsSettings()
             }
         }
 
@@ -182,7 +182,7 @@ class VoiceService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        // пользователь смахнул приложение из recent apps
+
         val restartIntent = Intent(applicationContext, VoiceService::class.java)
         val pending = PendingIntent.getService(
             this, 1, restartIntent,
@@ -196,14 +196,13 @@ class VoiceService : Service() {
         super.onDestroy()
 
         handler.removeCallbacks(commandTimeoutRunnable)
-        audioDucker.stop() // <-- на всякий случай
+        audioDucker.stop()
 
         audioRecorder.stop()
 
-        soundPool?.release()
-        soundPool = null
+        soundPoolProvider.release()
 
-        handler.removeCallbacksAndMessages(null) // опционально, если хочешь «обнулить очередь»
+        handler.removeCallbacksAndMessages(null)
 
         ttsManager.shutdown()
     }
@@ -233,7 +232,7 @@ class VoiceService : Service() {
 
 
     private fun switchToCommandModeInternal() {
-        audioDucker.start() // <-- ДО начала распознавания команды
+        audioDucker.start()
         isListeningCommand = true
 
         vosk.resetCommand()
@@ -249,12 +248,12 @@ class VoiceService : Service() {
         isListeningCommand = false
         handler.removeCallbacks(commandTimeoutRunnable)
 
-        audioDucker.stop() // <-- ВСЕГДА отпускаем фокус при выходе из команд
+        audioDucker.stop()
 
         vosk.resetCommand()
         vosk.resetWake()
 
-        soundPoolProvider.playSad() //— оставь как тебе нужно (у тебя оно уже есть и тут, и в handleCommand)
+        soundPoolProvider.playSad()
         publishRecognizedText("Слушаю...")
         Log.d(APPLICATION_NAME, "VoiceService::resetToWakeModeInternal")
     }
@@ -293,7 +292,7 @@ class VoiceService : Service() {
         return NotificationCompat.Builder(this, VOICE_CHANNEL)
             .setContentTitle("🎤 Слушает Джарвис")
             .setContentText("Говори 'Джарвис, следующий трек'")
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)  // 👈 ИБАЗАТЕЛЬНО!
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .build()
