@@ -8,7 +8,4 @@ interface VoiceEffects {
     fun enterWake()
     fun enterCommand()
 
-    fun scheduleCommandTimeout()
-    fun cancelCommandTimeout()
-
 }

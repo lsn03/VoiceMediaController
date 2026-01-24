@@ -18,13 +18,10 @@ import androidx.core.content.ContextCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import dagger.hilt.android.AndroidEntryPoint
 import ru.lsn03.voicemediacontroller.action.ActionExecutorProvider
-import ru.lsn03.voicemediacontroller.action.VoiceAction
 import ru.lsn03.voicemediacontroller.audio.AudioManagerControllerProvider
 import ru.lsn03.voicemediacontroller.audio.ducker.AudioDucker
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPoolProvider
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPrefs
-import ru.lsn03.voicemediacontroller.command.CommandBinding
-import ru.lsn03.voicemediacontroller.command.CommandMatcher
 import ru.lsn03.voicemediacontroller.di.TtsManager
 import ru.lsn03.voicemediacontroller.events.VoiceEvents
 import ru.lsn03.voicemediacontroller.media.MediaControlGateway
@@ -37,7 +34,7 @@ import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 import javax.inject.Inject
 
 @AndroidEntryPoint
-class VoiceService : Service(), VoiceEffects {
+class VoiceService : Service() {
 
     companion object {
         val SAMPLE_RATE = 16000
@@ -51,7 +48,11 @@ class VoiceService : Service(), VoiceEffects {
 
     }
 
-    private lateinit var voiceCoordinator: VoiceCoordinator
+    @Inject
+    lateinit var voiceCoordinator: VoiceCoordinator
+
+    @Inject
+    lateinit var voiceEffects: VoiceEffects
 
     @Inject
     lateinit var actionExecutorProvider: ActionExecutorProvider
@@ -87,11 +88,6 @@ class VoiceService : Service(), VoiceEffects {
     @Inject
     lateinit var handler: Handler
 
-    private val commandTimeoutRunnable = Runnable {
-        Log.d(APPLICATION_NAME, "VoiceService::commandTimeoutRunnable Таймаут команд, назад к wake")
-        voiceCoordinator.onTimeout()
-    }
-
 
     private var happyVol = 0.6f
     private var sadVol = 0.6f
@@ -99,28 +95,6 @@ class VoiceService : Service(), VoiceEffects {
     private val KEY_HAPPY_VOL = "happy_vol"
     private val KEY_SAD_VOL = "sad_vol"
 
-    private val matcher by lazy {
-        CommandMatcher(
-            listOf(
-                CommandBinding(
-                    listOf("следующий трек", "следующий", "некст", "че за хуйня", "что за хуйня"),
-                    VoiceAction.NEXT
-                ),
-                CommandBinding(listOf("предыдущий трек", "предыдущий", "прев"), VoiceAction.PREV),
-                CommandBinding(listOf("пауза", "стоп"), VoiceAction.STOP),
-                CommandBinding(
-                    listOf("продолжи", "продолжить", "возобнови", "плей", "плэй", "играй", "старт"),
-                    VoiceAction.START
-                ),
-                CommandBinding(listOf("тише", "уменьши"), VoiceAction.VOLUME_DOWN),
-                CommandBinding(listOf("громче", "увеличь"), VoiceAction.VOLUME_UP),
-                CommandBinding(listOf("время"), VoiceAction.SAY_TIME),
-                CommandBinding(listOf("название"), VoiceAction.SAY_TITLE),
-            )
-        )
-    }
-
-    private val COMMAND_TIMEOUT_MS = 10000L
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         intent?.extras?.let { b ->
@@ -193,7 +167,6 @@ class VoiceService : Service(), VoiceEffects {
     override fun onDestroy() {
         super.onDestroy()
 
-        handler.removeCallbacks(commandTimeoutRunnable)
         audioDucker.stop()
 
         audioRecorder.stop()
@@ -207,42 +180,6 @@ class VoiceService : Service(), VoiceEffects {
 
     override fun onBind(intent: Intent?): IBinder? {
         TODO("Not yet implemented")
-    }
-
-    override fun publishText(text: String) {
-        publishRecognizedText(text)
-    }
-
-    override fun onFinalCommand(text: String) {
-        handleCommandText(text)
-    }
-
-    override fun enterWake() {
-        audioDucker.stop()
-        vosk.resetCommand()
-        vosk.resetWake()
-        soundPoolProvider.playSad()
-        publishRecognizedText("Слушаю...")
-        Log.d(APPLICATION_NAME, "VoiceService::enterWake")
-    }
-
-
-    override fun enterCommand() {
-        audioDucker.start()
-        vosk.resetCommand()
-        soundPoolProvider.playHappy()
-        publishRecognizedText("Слушаю команду...")
-        Log.d(APPLICATION_NAME, "VoiceService::enterCommand")
-    }
-
-    override fun scheduleCommandTimeout() {
-        handler.removeCallbacks(commandTimeoutRunnable)
-        handler.postDelayed(commandTimeoutRunnable, COMMAND_TIMEOUT_MS)
-    }
-
-    override fun cancelCommandTimeout() {
-        handler.removeCallbacks(commandTimeoutRunnable)
-
     }
 
     @SuppressLint("MissingPermission")
@@ -263,29 +200,7 @@ class VoiceService : Service(), VoiceEffects {
             }
         )
     }
-
-    private fun normalize(s: String) = s.trim().lowercase()
-
-
-    private fun handleCommandText(cmd: String) {
-        val text = normalize(cmd)
-        if (text.isEmpty()) {
-            Log.d(APPLICATION_NAME, "Empty command text")
-            return
-        }
-        Log.d(APPLICATION_NAME, "Command text: $text")
-        publishRecognizedText("Выполняю: $text")
-
-        val action = matcher.match(text) ?: VoiceAction.UNKNOWN
-        Log.d(APPLICATION_NAME, "Action=$action")
-
-        val exec = actionExecutorProvider.getExecutor(action)
-
-        exec.execute()
-
-        voiceCoordinator.onTimeout()
-    }
-
+    
     private fun publishRecognizedText(text: String) {
         val intent = Intent(VoiceEvents.ACTION_RECOGNIZED_TEXT).apply {
             putExtra(VoiceEvents.EXTRA_TEXT, text)
@@ -306,11 +221,6 @@ class VoiceService : Service(), VoiceEffects {
 
     private fun initializeVoskModel() {
         vosk.start()
-
-        voiceCoordinator = VoiceCoordinator(
-            vosk,
-            this
-        )
     }
 
 }

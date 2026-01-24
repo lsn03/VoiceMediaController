@@ -1,8 +1,8 @@
 package ru.lsn03.voicemediacontroller.voice
 
+import android.os.Handler
 import android.os.SystemClock
 import android.util.Log
-import ru.lsn03.voicemediacontroller.utils.Utilities
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 import ru.lsn03.voicemediacontroller.vosk.VoskResult
@@ -10,13 +10,17 @@ import ru.lsn03.voicemediacontroller.vosk.VoskResult
 class VoiceCoordinator(
     private val vosk: VoskEngine,
     private val effects: VoiceEffects,
+    private val handler: Handler,
 ) {
     private var lastUiUpdateMs = 0L
     private var lastWakeTriggerMs = 0L
     private val UI_THROTTLE_MS = 250L        // не чаще 4 раз/сек
     private val WAKE_DEBOUNCE_MS = 1200L
+    private val commandTimeoutMs: Long = 10_000L
 
     private var state: VoiceState = VoiceState.WAKE_LISTENING
+
+    private val timeoutRunnable = Runnable { onTimeout() }
 
 
     fun onPcm(pcm: ByteArray) {
@@ -109,13 +113,13 @@ class VoiceCoordinator(
         state = VoiceState.SWITCHING
         when (target) {
             VoiceState.WAKE_LISTENING -> {
-                effects.cancelCommandTimeout()
+                handler.removeCallbacks(timeoutRunnable)
                 effects.enterWake()
             }
-
             VoiceState.COMMAND_LISTENING -> {
                 effects.enterCommand()
-                effects.scheduleCommandTimeout()
+                handler.removeCallbacks(timeoutRunnable)
+                handler.postDelayed(timeoutRunnable, commandTimeoutMs)
             }
 
             VoiceState.SWITCHING -> Unit
