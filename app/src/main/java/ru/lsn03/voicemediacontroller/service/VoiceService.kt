@@ -6,10 +6,12 @@ import android.app.*
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.SoundPool
-import android.os.*
+import android.media.*
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.SystemClock
+import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -17,22 +19,25 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
-import org.json.JSONObject
-import org.vosk.Model
-import org.vosk.Recognizer
 import ru.lsn03.voicemediacontroller.R
+import ru.lsn03.voicemediacontroller.action.ActionExecutorProvider
+import ru.lsn03.voicemediacontroller.action.VoiceAction
+import ru.lsn03.voicemediacontroller.audio.AudioManagerControllerProvider
+import ru.lsn03.voicemediacontroller.audio.AudioManagerControllerProviderImpl
 import ru.lsn03.voicemediacontroller.command.CommandBinding
 import ru.lsn03.voicemediacontroller.command.CommandMatcher
 import ru.lsn03.voicemediacontroller.events.VoiceEvents
+import ru.lsn03.voicemediacontroller.media.MediaControlGateway
+import ru.lsn03.voicemediacontroller.media.MediaControlGatewayImpl
+import ru.lsn03.voicemediacontroller.media.MediaControllerProvider
+import ru.lsn03.voicemediacontroller.media.MediaControllerProviderImpl
+import ru.lsn03.voicemediacontroller.media.NowPlayingGateway
+import ru.lsn03.voicemediacontroller.media.NowPlayingGatewayImpl
+import ru.lsn03.voicemediacontroller.tts.SpeechGateway
+import ru.lsn03.voicemediacontroller.tts.SpeechGatewayImpl
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
-import ru.lsn03.voicemediacontroller.utils.Utilities.MODEL_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.VOICE_CHANNEL
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
-import ru.lsn03.voicemediacontroller.vosk.VoskResult
-import java.io.File
-import java.io.IOException
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
 import java.util.*
 
 
@@ -40,48 +45,46 @@ class VoiceService : Service() {
 
     private lateinit var audioRecorder: AudioRecorder
     private lateinit var vosk: VoskEngine
-
+    private lateinit var voiceCoordinator: VoiceCoordinator
+    private lateinit var audioManagerControllerProvider: AudioManagerControllerProvider
+    private lateinit var actionExecutorProvider: ActionExecutorProvider
+    private lateinit var mediaControlGateway: MediaControlGateway
+    private lateinit var mediaControllerProvider: MediaControllerProvider
+    private lateinit var speechGateway: SpeechGateway
+    private lateinit var nowPlayingGateway: NowPlayingGateway
 
     companion object {
         val SAMPLE_RATE = 16000
-        private val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
-        private val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
 
         const val ACTION_PREVIEW_WAKE = "ru.lsn03.voicemediacontroller.action.PREVIEW_WAKE"
         const val ACTION_PREVIEW_SLEEP = "ru.lsn03.voicemediacontroller.action.PREVIEW_SLEEP"
 
         const val ACTION_OPEN_TTS_INSTALL = "ru.lsn03.voicemediacontroller.action.OPEN_TTS_INSTALL"
         const val ACTION_OPEN_TTS_SETTINGS = "ru.lsn03.voicemediacontroller.action.OPEN_TTS_SETTINGS"
-        const val NOTIF_ID = 1              // у тебя уже startForeground(1,...)
         const val NOTIF_TTS_HELP_ID = 2     // отдельная нотификация-помощник
 
     }
 
-    private var focusReq: android.media.AudioFocusRequest? = null
+    private var focusReq: AudioFocusRequest? = null
+
     @Volatile
     private var duckActive = false
 
-    private val afListener = android.media.AudioManager.OnAudioFocusChangeListener { /* можно игнорить */ }
+    private val afListener = AudioManager.OnAudioFocusChangeListener { /* можно игнорить */ }
 
 
     private var isListeningCommand = false
-    private var lastUiUpdateMs = 0L
-    private var lastWakeTriggerMs = 0L
-    private val UI_THROTTLE_MS = 250L        // не чаще 4 раз/сек
-    private val WAKE_DEBOUNCE_MS = 1200L     // защита от повторов "джарвис"
+
 
     private var tts: TextToSpeech? = null
-    @Volatile private var ttsReady: Boolean = false
+
+    @Volatile
+    private var ttsReady: Boolean = false
 
 
     @Volatile
     private var pendingResetToWake = false
 
-    @Volatile
-    private var pendingSwitchToCommand = false
-
-    @Volatile
-    private var isRunning = true
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -93,12 +96,11 @@ class VoiceService : Service() {
     }
 
     private val audioManager by lazy {
-        getSystemService(AUDIO_SERVICE) as android.media.AudioManager
+        getSystemService(AUDIO_SERVICE) as AudioManager
     }
 
 
-
-    private var soundPool: android.media.SoundPool? = null
+    private var soundPool: SoundPool? = null
     private var sndHappy = 0
     private var sndSad = 0
 
@@ -128,40 +130,6 @@ class VoiceService : Service() {
                 CommandBinding(listOf("время"), VoiceAction.SAY_TIME),
                 CommandBinding(listOf("название"), VoiceAction.SAY_TITLE),
             )
-        )
-    }
-
-    private val executor: ActionExecutor = object : ActionExecutor {
-        override fun execute(action: VoiceAction) {
-            when (action) {
-                VoiceAction.NEXT -> nextTrack()
-                VoiceAction.PREV -> prevTrack()
-                VoiceAction.START -> playPlayback()
-                VoiceAction.STOP -> pausePlayback()
-                VoiceAction.VOLUME_UP -> volumeUp()
-                VoiceAction.VOLUME_DOWN -> volumeDown()
-                VoiceAction.SAY_TIME -> speakTime()
-                VoiceAction.SAY_TITLE -> speakNowPlaying()
-                VoiceAction.UNKNOWN -> Unit
-            }
-        }
-    }
-
-
-
-    private fun volumeUp() {
-        audioManager.adjustStreamVolume(
-            android.media.AudioManager.STREAM_MUSIC,
-            android.media.AudioManager.ADJUST_RAISE,
-            android.media.AudioManager.FLAG_SHOW_UI
-        )
-    }
-
-    private fun volumeDown() {
-        audioManager.adjustStreamVolume(
-            android.media.AudioManager.STREAM_MUSIC,
-            android.media.AudioManager.ADJUST_LOWER,
-            android.media.AudioManager.FLAG_SHOW_UI
         )
     }
 
@@ -231,8 +199,9 @@ class VoiceService : Service() {
 
         audioRecorder = AudioRecorder(sampleRate = SAMPLE_RATE)
 
-
         tts = initializeTts()
+
+        initializeActionExecutorProvider()
 
         initializeVoskModel()
 
@@ -243,6 +212,24 @@ class VoiceService : Service() {
         initializeSoundPool()
 
         startListening()
+    }
+
+    private fun initializeActionExecutorProvider() {
+        speechGateway = SpeechGatewayImpl(
+            handler = handler,
+            isReady = { ttsReady },
+            ttsProvider = { tts }
+        )
+        mediaControllerProvider = MediaControllerProviderImpl(this)
+        nowPlayingGateway = NowPlayingGatewayImpl(mediaControllerProvider)
+        mediaControlGateway = MediaControlGatewayImpl(mediaControllerProvider)
+        audioManagerControllerProvider = AudioManagerControllerProviderImpl(this)
+        actionExecutorProvider = ActionExecutorProvider(
+            audioManagerControllerProvider,
+            mediaControlGateway,
+            speechGateway,
+            nowPlayingGateway
+        )
     }
 
     private fun initializeSoundPool() {
@@ -278,6 +265,15 @@ class VoiceService : Service() {
             sampleRate = SAMPLE_RATE
         )
         vosk.start()
+
+        voiceCoordinator = VoiceCoordinator(
+            vosk,
+            ::handleCommandText,
+            publishRecognizedText = ::publishRecognizedText,
+            playHappy = ::playHappy,
+            switchToCommandModeInternal = ::switchToCommandModeInternal,
+            resetToWakeModeInternal = ::resetToWakeModeInternal,
+        )
     }
 
     private fun initializeTts(): TextToSpeech = TextToSpeech(applicationContext) { status ->
@@ -285,7 +281,7 @@ class VoiceService : Service() {
 
         Log.d(APPLICATION_NAME, "initialization TTS,status=$status")
         if (ttsReady) {
-    //                tts?.language = Locale("ru", "RU") // или Locale.getDefault()
+            //                tts?.language = Locale("ru", "RU") // или Locale.getDefault()
             tts?.language = Locale.getDefault()
 
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -334,7 +330,7 @@ class VoiceService : Service() {
             startActivity(i)
         } catch (e: Exception) {
             // Фоллбэк на общие настройки
-            startActivity(Intent(android.provider.Settings.ACTION_SETTINGS).apply {
+            startActivity(Intent(Settings.ACTION_SETTINGS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             })
         }
@@ -391,104 +387,13 @@ class VoiceService : Service() {
         }
 
         audioRecorder.start(
-            onPcm = { pcm ->
-                // сюда переносишь ВСЁ что ниже создания pcm в твоём коде:
-                // pendingResetToWake / pendingSwitchToCommand / isListeningCommand ...
-                handlePcm(pcm)
-            },
+            onPcm = voiceCoordinator::onPcm,
             onError = { msg ->
                 Log.e(APPLICATION_NAME, msg)
                 publishRecognizedText(msg)
             }
         )
     }
-
-    private fun handlePcm(pcm: ByteArray) {
-        val now = SystemClock.elapsedRealtime()
-
-        if (pendingResetToWake) {
-            pendingResetToWake = false
-            Log.d(APPLICATION_NAME, "handlePcm: pendingResetToWake")
-            resetToWakeModeInternal()
-            return
-        }
-
-        if (pendingSwitchToCommand) {
-            pendingSwitchToCommand = false
-            Log.d(APPLICATION_NAME, "handlePcm: pendingSwitchToCommand")
-            switchToCommandModeInternal()
-        }
-
-        if (isListeningCommand) {
-            // ---------- COMMAND MODE ----------
-            when (val r = vosk.acceptCommand(pcm)) {
-                is VoskResult.Final -> {
-                    Log.d(APPLICATION_NAME, "VoiceService:: CMD final: ${r.text}")
-                    handleCommandText(r.text)
-                }
-                is VoskResult.Partial -> {
-                    val partialText = r.text.trim()
-                    if (partialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
-                        lastUiUpdateMs = now
-                        publishRecognizedText("Команда: $partialText")
-                    }
-                }
-                VoskResult.None -> Unit
-            }
-
-        } else {
-            // ---------- WAKE MODE ----------
-            when (val r = vosk.acceptWake(pcm)) {
-                is VoskResult.Final -> {
-                    val txt = normalize(r.text)
-                    Log.d(APPLICATION_NAME, "VoiceService:: WAKE final: $txt")
-
-                    when {
-                        txt == "джарвис" -> {
-                            val now2 = SystemClock.elapsedRealtime()
-                            if (now2 - lastWakeTriggerMs >= WAKE_DEBOUNCE_MS) {
-                                lastWakeTriggerMs = now2
-                                publishRecognizedText("Джарвис! Слушаю команду...")
-                                playHappy()
-                                switchToCommandMode()
-                            } else {
-                                Log.d(APPLICATION_NAME, "Wake debounce: ignored")
-                            }
-                        }
-
-                        txt.startsWith("джарвис ") -> {
-                            playHappy()
-                            val cmd = txt.removePrefix("джарвис ").trim()
-                            Log.d(APPLICATION_NAME, "VoiceService:: WAKE cmd: $cmd")
-                            publishRecognizedText("Выполняю: $cmd")
-
-                            handleCommandText(cmd)
-
-                            // остаёмся в WAKE (а handleCommandText сам поставит pendingResetToWake
-                            // если ты внутри него вызываешь resetToWakeMode())
-                            vosk.resetWake()
-                        }
-
-                        else -> {
-                            // не наша фраза
-                            vosk.resetWake()
-                        }
-                    }
-                }
-
-                is VoskResult.Partial -> {
-                    val wakePartialText = r.text.trim()
-                    if (wakePartialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
-                        lastUiUpdateMs = now
-                        publishRecognizedText("Слышу: $wakePartialText")
-                    }
-                }
-
-                VoskResult.None -> Unit
-            }
-        }
-    }
-
 
 
     private fun switchToCommandModeInternal() {
@@ -519,15 +424,6 @@ class VoiceService : Service() {
     }
 
 
-    private fun switchToCommandMode() {
-        pendingSwitchToCommand = true
-    }
-
-    private fun resetToWakeMode() {
-        pendingResetToWake = true
-    }
-
-
     fun normalize(s: String) = s.trim().lowercase()
 
 
@@ -542,35 +438,17 @@ class VoiceService : Service() {
 
         val action = matcher.match(text) ?: VoiceAction.UNKNOWN
         Log.d(APPLICATION_NAME, "Action=$action")
-        executor.execute(action)
+
+        val exec = actionExecutorProvider.providers.firstOrNull { it.getAction() == action }
+            ?: actionExecutorProvider.providers.first { it.getAction() == VoiceAction.UNKNOWN }
+
+        exec.execute()
 
         resetToWakeMode()
     }
 
-
-    private fun handleCommand(resultJson: String) {
-        handleCommandText(parseText(resultJson))
-    }
-
-
-    private fun pausePlayback() {
-        val controller = getTopMediaController()
-        if (controller == null) {
-            Log.d(APPLICATION_NAME, "VoiceService::pausePlayback Нет активного плеера для PAUSE")
-            return
-        }
-        controller.transportControls.pause()
-        Log.d(APPLICATION_NAME, "VoiceService::pausePlayback pause отправлен в ${controller.packageName}")
-    }
-
-    private fun playPlayback() {
-        val controller = getTopMediaController()
-        if (controller == null) {
-            Log.d(APPLICATION_NAME, "VoiceService::playPlayback Нет активного плеера для PLAY")
-            return
-        }
-        controller.transportControls.play()
-        Log.d(APPLICATION_NAME, "VoiceService::playPlayback play отправлен в ${controller.packageName}")
+    private fun resetToWakeMode() {
+        pendingResetToWake = true
     }
 
     private fun playHappy() {
@@ -582,90 +460,6 @@ class VoiceService : Service() {
         val id = soundPool?.play(sndSad, sadVol, sadVol, 1, 0, 1f) ?: 0
         Log.d(APPLICATION_NAME, "VoiceService::playSad soundId=$sndSad streamId=$id vol=$sadVol")
     }
-
-
-    private fun parseText(jsonString: String): String {
-        return try {
-            JSONObject(jsonString).optString("text", "")
-        } catch (e: Exception) {
-            ""
-        }
-    }
-
-
-    private fun parsePartial(jsonString: String): String {
-        return try {
-            val json = JSONObject(jsonString)
-            val partial = json.optString("partial")
-            partial
-        } catch (e: Exception) {
-            Log.e(APPLICATION_NAME, "JsonString=${jsonString} JSON error: ${e.message}")
-            ""
-        }
-    }
-
-    private fun canControlMediaSessions(): Boolean {
-        val nm = getSystemService(android.app.NotificationManager::class.java)
-        val cn = android.content.ComponentName(this, JarvisNotificationListener::class.java)
-
-        val accessGranted = nm.isNotificationListenerAccessGranted(cn)
-        val connected = JarvisNotificationListener.connected
-
-        if (accessGranted && !connected) {
-            android.service.notification.NotificationListenerService.requestRebind(cn)
-            Log.d(APPLICATION_NAME, "requestRebind() called for NotificationListener")
-        }
-
-        Log.d(APPLICATION_NAME, "NotifAccess=$accessGranted, listenerConnected=$connected")
-        return accessGranted && connected
-    }
-
-
-    private fun getTopMediaController(): android.media.session.MediaController? {
-        if (!canControlMediaSessions()) {
-            Log.e(
-                APPLICATION_NAME,
-                "VoiceService::getTopMediaController Notification access не готов: включите доступ и перезапустите приложение/сервис"
-            )
-            return null
-        }
-
-        val msm = getSystemService(MEDIA_SESSION_SERVICE) as android.media.session.MediaSessionManager
-        val component = android.content.ComponentName(this, JarvisNotificationListener::class.java)
-
-        return try {
-            msm.getActiveSessions(component).firstOrNull()
-        } catch (e: SecurityException) {
-            Log.e(
-                APPLICATION_NAME,
-                "VoiceService::getTopMediaController SecurityException в getActiveSessions (listener ещё не активен)",
-                e
-            )
-            null
-        }
-    }
-
-
-    private fun nextTrack() {
-        val controller = getTopMediaController()
-        if (controller == null) {
-            Log.d(APPLICATION_NAME, "VoiceService::nextTrack Нет активного плеера для NEXT")
-            return
-        }
-        controller.transportControls.skipToNext()
-        Log.d(APPLICATION_NAME, "️VoiceService::nextTrack skipToNext отправлен в ${controller.packageName}")
-    }
-
-    private fun prevTrack() {
-        val controller = getTopMediaController()
-        if (controller == null) {
-            Log.d(APPLICATION_NAME, "VoiceService::prevTrack Нет активного плеера для PREV")
-            return
-        }
-        controller.transportControls.skipToPrevious()
-        Log.d(APPLICATION_NAME, "VoiceService:::prevTrack️ skipToPrevious отправлен в ${controller.packageName}")
-    }
-
 
     override fun onDestroy() {
         handler.removeCallbacks(commandTimeoutRunnable)
@@ -688,65 +482,22 @@ class VoiceService : Service() {
         super.onDestroy()
     }
 
-    private fun speakNowPlaying() {
-        val controller = getTopMediaController()
-        if (controller == null) {
-            speak("Не вижу активный плеер", "cmd_title_none")
-            return
-        }
-
-        val md = controller.metadata
-        val title = md?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE)
-        val artist = md?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST)
-            ?: md?.getString(android.media.MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
-
-        val t = title?.takeIf { it.isNotBlank() }
-        val a = artist?.takeIf { it.isNotBlank() }
-
-        val phrase = when {
-            a != null && t != null -> "Сейчас играет: $a — $t"
-            t != null -> "Сейчас играет: $t"
-            else -> "Не удалось получить название трека"
-        }
-
-        speak(phrase, "cmd_title")
-    }
-
-
-    private fun speakTime() {
-        val now = LocalTime.now()
-        val hhmm = now.format(DateTimeFormatter.ofPattern("HH:mm"))
-        speak("Сейчас $hhmm", "cmd_time")
-    }
-
-
-    private fun speak(text: String, utteranceId: String) {
-        handler.post {
-            if (!ttsReady) {
-                Log.w(APPLICATION_NAME, "TTS not ready, skip: $text")
-                return@post
-            }
-            val params = Bundle()
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
-        }
-    }
-
     private fun duckStart() {
         if (duckActive) return
 
-        val req = android.media.AudioFocusRequest.Builder(
-            android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+        val req = AudioFocusRequest.Builder(
+            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
         )
             .setAudioAttributes(
-                android.media.AudioAttributes.Builder()
-                    .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
-                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
             )
             .setOnAudioFocusChangeListener(afListener)
             .build()
 
-        val granted = audioManager.requestAudioFocus(req) == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        val granted = audioManager.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         Log.d(APPLICATION_NAME, "duckStart granted=$granted")
 
         if (granted) {
