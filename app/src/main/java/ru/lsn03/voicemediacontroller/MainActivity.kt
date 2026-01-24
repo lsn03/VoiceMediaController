@@ -37,11 +37,12 @@ import androidx.core.content.ContextCompat.getSystemService
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import ru.lsn03.voicemediacontroller.events.VoiceEvents
 import ru.lsn03.voicemediacontroller.service.VoiceService
+import ru.lsn03.voicemediacontroller.ui.AppRoot
 import ru.lsn03.voicemediacontroller.ui.theme.VoiceMediaControlTheme
 
 class MainActivity : ComponentActivity() {
 
-    private var recognizedStatus by mutableStateOf("Нет текста")
+    private var recognizedStatus by mutableStateOf("Жду команду")
 
     private val voiceReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -100,15 +101,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             VoiceMediaControlTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    VoiceControlScreen(
-                        modifier = Modifier.padding(innerPadding),
-                        recognizedStatus = recognizedStatus
-                    )
-
-                }
+                AppRoot(recognizedStatus = recognizedStatus)
             }
         }
+
     }
 
 
@@ -169,7 +165,7 @@ fun VoiceControlScreen(modifier: Modifier = Modifier,
         if (granted) {
             ContextCompat.startForegroundService(context, Intent(context, VoiceService::class.java))
             isRunning = true
-            status = "Слушает Джарвис..."
+            status = "Ассисент слушает вас..."
         } else {
             isRunning = false
             status = "Нет разрешения на микрофон"
