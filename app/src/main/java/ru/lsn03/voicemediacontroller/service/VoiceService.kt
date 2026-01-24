@@ -7,7 +7,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
-import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.SoundPool
 import android.os.Handler
@@ -43,18 +42,6 @@ import java.util.*
 
 class VoiceService : Service() {
 
-    private lateinit var audioRecorder: AudioRecorder
-    private lateinit var vosk: VoskEngine
-    private lateinit var voiceCoordinator: VoiceCoordinator
-    private lateinit var audioManagerControllerProvider: AudioManagerControllerProvider
-    private lateinit var actionExecutorProvider: ActionExecutorProvider
-    private lateinit var mediaControlGateway: MediaControlGateway
-    private lateinit var mediaControllerProvider: MediaControllerProvider
-    private lateinit var speechGateway: SpeechGateway
-    private lateinit var nowPlayingGateway: NowPlayingGateway
-    private lateinit var audioManager: AudioManager
-    private lateinit var audioDucker: AudioDucker
-
     companion object {
         val SAMPLE_RATE = 16000
 
@@ -67,26 +54,23 @@ class VoiceService : Service() {
 
     }
 
-    private var focusReq: AudioFocusRequest? = null
-
-    @Volatile
-    private var duckActive = false
-
-    private val afListener = AudioManager.OnAudioFocusChangeListener { /* можно игнорить */ }
-
+    private lateinit var audioRecorder: AudioRecorder
+    private lateinit var vosk: VoskEngine
+    private lateinit var voiceCoordinator: VoiceCoordinator
+    private lateinit var audioManagerControllerProvider: AudioManagerControllerProvider
+    private lateinit var actionExecutorProvider: ActionExecutorProvider
+    private lateinit var mediaControlGateway: MediaControlGateway
+    private lateinit var mediaControllerProvider: MediaControllerProvider
+    private lateinit var speechGateway: SpeechGateway
+    private lateinit var nowPlayingGateway: NowPlayingGateway
+    private lateinit var audioManager: AudioManager
+    private lateinit var audioDucker: AudioDucker
 
     private var isListeningCommand = false
-
-
     private var tts: TextToSpeech? = null
 
     @Volatile
     private var ttsReady: Boolean = false
-
-
-    @Volatile
-    private var pendingResetToWake = false
-
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -96,7 +80,6 @@ class VoiceService : Service() {
             resetToWakeMode()
         }
     }
-
 
     private var soundPool: SoundPool? = null
     private var sndHappy = 0
@@ -173,6 +156,138 @@ class VoiceService : Service() {
         return START_STICKY
     }
 
+    override fun onCreate() {
+        Log.i(APPLICATION_NAME, "VoiceService onCreate()")
+        super.onCreate()
+
+
+        audioRecorder = AudioRecorder(sampleRate = SAMPLE_RATE)
+
+
+        initializeAudioDucker()
+
+        tts = initializeTts()
+
+        initializeActionExecutorProvider()
+
+        initializeVoskModel()
+
+        // prefs
+        initializePref()
+
+        // SoundPool
+        initializeSoundPool()
+
+        startListening()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        // пользователь смахнул приложение из recent apps
+        val restartIntent = Intent(applicationContext, VoiceService::class.java)
+        val pending = PendingIntent.getService(
+            this, 1, restartIntent,
+            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val alarm = getSystemService(ALARM_SERVICE) as AlarmManager
+        alarm.setExact(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + 1000, pending)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+
+        handler.removeCallbacks(commandTimeoutRunnable)
+        audioDucker.stop() // <-- на всякий случай
+
+        audioRecorder.stop()
+
+        soundPool?.release()
+        soundPool = null
+
+        handler.removeCallbacksAndMessages(null) // опционально, если хочешь «обнулить очередь»
+
+        handler.post {
+            tts?.stop()
+            tts?.shutdown()
+            tts = null
+            ttsReady = false
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? {
+        TODO("Not yet implemented")
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startListening() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.e(APPLICATION_NAME, "No RECORD_AUDIO permission")
+            publishRecognizedText("Нет разрешения на микрофон")
+            return
+        }
+
+        audioRecorder.start(
+            onPcm = voiceCoordinator::onPcm,
+            onError = { msg ->
+                Log.e(APPLICATION_NAME, msg)
+                publishRecognizedText(msg)
+            }
+        )
+    }
+
+
+    private fun switchToCommandModeInternal() {
+        audioDucker.start() // <-- ДО начала распознавания команды
+        isListeningCommand = true
+
+        vosk.resetCommand()
+
+        publishRecognizedText("Слушаю команду...")
+        handler.removeCallbacks(commandTimeoutRunnable)
+        handler.postDelayed(commandTimeoutRunnable, COMMAND_TIMEOUT_MS)
+        Log.d(APPLICATION_NAME, "VoiceService::switchToCommandModeInternal")
+    }
+
+
+    private fun resetToWakeModeInternal() {
+        isListeningCommand = false
+        handler.removeCallbacks(commandTimeoutRunnable)
+
+        audioDucker.stop() // <-- ВСЕГДА отпускаем фокус при выходе из команд
+
+        vosk.resetCommand()
+        vosk.resetWake()
+
+        playSad() //— оставь как тебе нужно (у тебя оно уже есть и тут, и в handleCommand)
+        publishRecognizedText("Слушаю...")
+        Log.d(APPLICATION_NAME, "VoiceService::resetToWakeModeInternal")
+    }
+
+
+    private fun normalize(s: String) = s.trim().lowercase()
+
+
+    private fun handleCommandText(cmd: String) {
+        val text = normalize(cmd)
+        if (text.isEmpty()) {
+            Log.d(APPLICATION_NAME, "Empty command text")
+            return
+        }
+        Log.d(APPLICATION_NAME, "Command text: $text")
+        publishRecognizedText("Выполняю: $text")
+
+        val action = matcher.match(text) ?: VoiceAction.UNKNOWN
+        Log.d(APPLICATION_NAME, "Action=$action")
+
+        val exec = actionExecutorProvider.getExecutor(action)
+
+        exec.execute()
+
+        resetToWakeMode()
+    }
+
     private fun publishRecognizedText(text: String) {
         val intent = Intent(VoiceEvents.ACTION_RECOGNIZED_TEXT).apply {
             putExtra(VoiceEvents.EXTRA_TEXT, text)
@@ -190,29 +305,6 @@ class VoiceService : Service() {
             .build()
     }
 
-    override fun onCreate() {
-        Log.i(APPLICATION_NAME, "VoiceService onCreate()")
-        super.onCreate()
-
-
-        audioRecorder = AudioRecorder(sampleRate = SAMPLE_RATE)
-
-
-        tts = initializeTts()
-
-        initializeActionExecutorProvider()
-
-        initializeVoskModel()
-
-        // prefs
-        initializePref()
-
-        // SoundPool
-        initializeSoundPool()
-
-        startListening()
-    }
-
     private fun initializeActionExecutorProvider() {
         speechGateway = SpeechGatewayImpl(
             handler = handler,
@@ -223,7 +315,6 @@ class VoiceService : Service() {
         mediaControllerProvider = MediaControllerProviderImpl(this)
         nowPlayingGateway = NowPlayingGatewayImpl(mediaControllerProvider)
         mediaControlGateway = MediaControlGatewayImpl(mediaControllerProvider)
-        audioManagerControllerProvider = AudioManagerControllerProviderImpl(this)
         actionExecutorProvider = ActionExecutorProvider(
             audioManagerControllerProvider,
             mediaControlGateway,
@@ -231,9 +322,7 @@ class VoiceService : Service() {
             nowPlayingGateway
         )
 
-        audioManager = audioManagerControllerProvider.getAudioManager()
 
-        audioDucker = AudioDuckerImpl(audioManager, handler)
     }
 
     private fun initializeSoundPool() {
@@ -367,91 +456,7 @@ class VoiceService : Service() {
         nm.notify(NOTIF_TTS_HELP_ID, n)
     }
 
-
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        super.onTaskRemoved(rootIntent)
-        // пользователь смахнул приложение из recent apps
-        val restartIntent = Intent(applicationContext, VoiceService::class.java)
-        val pending = PendingIntent.getService(
-            this, 1, restartIntent,
-            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val alarm = getSystemService(ALARM_SERVICE) as AlarmManager
-        alarm.setExact(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + 1000, pending)
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun startListening() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            Log.e(APPLICATION_NAME, "No RECORD_AUDIO permission")
-            publishRecognizedText("Нет разрешения на микрофон")
-            return
-        }
-
-        audioRecorder.start(
-            onPcm = voiceCoordinator::onPcm,
-            onError = { msg ->
-                Log.e(APPLICATION_NAME, msg)
-                publishRecognizedText(msg)
-            }
-        )
-    }
-
-
-    private fun switchToCommandModeInternal() {
-        audioDucker.start() // <-- ДО начала распознавания команды
-        isListeningCommand = true
-
-        vosk.resetCommand()
-
-        publishRecognizedText("Слушаю команду...")
-        handler.removeCallbacks(commandTimeoutRunnable)
-        handler.postDelayed(commandTimeoutRunnable, COMMAND_TIMEOUT_MS)
-        Log.d(APPLICATION_NAME, "VoiceService::switchToCommandModeInternal")
-    }
-
-
-    private fun resetToWakeModeInternal() {
-        isListeningCommand = false
-        handler.removeCallbacks(commandTimeoutRunnable)
-
-        audioDucker.stop() // <-- ВСЕГДА отпускаем фокус при выходе из команд
-
-        vosk.resetCommand()
-        vosk.resetWake()
-
-        playSad() //— оставь как тебе нужно (у тебя оно уже есть и тут, и в handleCommand)
-        publishRecognizedText("Слушаю...")
-        Log.d(APPLICATION_NAME, "VoiceService::resetToWakeModeInternal")
-    }
-
-
-    fun normalize(s: String) = s.trim().lowercase()
-
-
-    private fun handleCommandText(cmd: String) {
-        val text = normalize(cmd)
-        if (text.isEmpty()) {
-            Log.d(APPLICATION_NAME, "Empty command text")
-            return
-        }
-        Log.d(APPLICATION_NAME, "Command text: $text")
-        publishRecognizedText("Выполняю: $text")
-
-        val action = matcher.match(text) ?: VoiceAction.UNKNOWN
-        Log.d(APPLICATION_NAME, "Action=$action")
-
-        val exec = actionExecutorProvider.getExecutor(action)
-
-        exec.execute()
-
-        resetToWakeMode()
-    }
-
     private fun resetToWakeMode() {
-        pendingResetToWake = true
         voiceCoordinator.resetToWakeMode()
     }
 
@@ -465,29 +470,11 @@ class VoiceService : Service() {
         Log.d(APPLICATION_NAME, "VoiceService::playSad soundId=$sndSad streamId=$id vol=$sadVol")
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-
-        handler.removeCallbacks(commandTimeoutRunnable)
-        audioDucker.stop() // <-- на всякий случай
-
-        audioRecorder.stop()
-
-        soundPool?.release()
-        soundPool = null
-
-        handler.removeCallbacksAndMessages(null) // опционально, если хочешь «обнулить очередь»
-
-        handler.post {
-            tts?.stop()
-            tts?.shutdown()
-            tts = null
-            ttsReady = false
-        }
+    private fun initializeAudioDucker() {
+        audioManagerControllerProvider = AudioManagerControllerProviderImpl(this)
+        audioManager = audioManagerControllerProvider.getAudioManager()
+        audioDucker = AudioDuckerImpl(audioManager, handler)
     }
 
-    override fun onBind(intent: Intent?): IBinder? {
-        TODO("Not yet implemented")
-    }
 }
 
