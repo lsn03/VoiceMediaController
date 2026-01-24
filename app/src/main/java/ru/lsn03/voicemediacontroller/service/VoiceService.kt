@@ -17,17 +17,15 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import dagger.hilt.android.AndroidEntryPoint
-import ru.lsn03.voicemediacontroller.action.ActionExecutorProvider
-import ru.lsn03.voicemediacontroller.audio.AudioManagerControllerProvider
+import kotlinx.coroutines.*
 import ru.lsn03.voicemediacontroller.audio.ducker.AudioDucker
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPoolProvider
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPrefs
 import ru.lsn03.voicemediacontroller.di.TtsManager
 import ru.lsn03.voicemediacontroller.events.VoiceEvents
-import ru.lsn03.voicemediacontroller.media.MediaControlGateway
-import ru.lsn03.voicemediacontroller.media.NowPlayingGateway
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.VOICE_CHANNEL
+import ru.lsn03.voicemediacontroller.voice.VoiceCommandRepository
 import ru.lsn03.voicemediacontroller.voice.VoiceCoordinator
 import ru.lsn03.voicemediacontroller.voice.VoiceEffects
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
@@ -49,20 +47,19 @@ class VoiceService : Service() {
     }
 
     @Inject
+    lateinit var repo: VoiceCommandRepository
+
+    @Inject
     lateinit var voiceCoordinator: VoiceCoordinator
 
     @Inject
     lateinit var voiceEffects: VoiceEffects
 
     @Inject
-    lateinit var actionExecutorProvider: ActionExecutorProvider
-
-    @Inject
     lateinit var soundPoolProvider: SoundPoolProvider
 
     @Inject
     lateinit var soundPrefs: SoundPrefs
-
 
     @Inject
     lateinit var ttsManager: TtsManager
@@ -72,15 +69,6 @@ class VoiceService : Service() {
 
     @Inject
     lateinit var vosk: VoskEngine
-
-    @Inject
-    lateinit var nowPlayingGateway: NowPlayingGateway
-
-    @Inject
-    lateinit var mediaControlGateway: MediaControlGateway
-
-    @Inject
-    lateinit var audioManagerControllerProvider: AudioManagerControllerProvider
 
     @Inject
     lateinit var audioDucker: AudioDucker
@@ -94,6 +82,8 @@ class VoiceService : Service() {
 
     private val KEY_HAPPY_VOL = "happy_vol"
     private val KEY_SAD_VOL = "sad_vol"
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -149,6 +139,19 @@ class VoiceService : Service() {
 
         initializeVoskModel()
 
+        voiceEffects.start(serviceScope)
+
+        // ВАЖНО: collect грамматик отдельно (тоже один раз)
+        Log.d(APPLICATION_NAME, "Subscribing to grammars")
+        serviceScope.launch {
+            // лучше использовать repo.grammars(serviceScope), раз ты его уже сделал
+            repo.grammars(this).collect { g ->
+                Log.d(APPLICATION_NAME, "Applying grammars: wake=${g.wakeWordGrammarJson.length}, cmd=${g.commandGrammarJson.length}")
+                vosk.updateGrammars(g.wakeWordGrammarJson, g.commandGrammarJson, g.wakeCommandGrammarJson)
+            }
+        }
+
+
         startListening()
     }
 
@@ -166,6 +169,7 @@ class VoiceService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        serviceScope.cancel()
 
         audioDucker.stop()
 
@@ -200,7 +204,7 @@ class VoiceService : Service() {
             }
         )
     }
-    
+
     private fun publishRecognizedText(text: String) {
         val intent = Intent(VoiceEvents.ACTION_RECOGNIZED_TEXT).apply {
             putExtra(VoiceEvents.EXTRA_TEXT, text)
