@@ -14,6 +14,8 @@ import ru.lsn03.voicemediacontroller.audio.AudioManagerControllerProvider
 import ru.lsn03.voicemediacontroller.audio.AudioManagerControllerProviderImpl
 import ru.lsn03.voicemediacontroller.audio.ducker.AudioDucker
 import ru.lsn03.voicemediacontroller.audio.ducker.AudioDuckerImpl
+import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPoolProvider
+import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPrefs
 import ru.lsn03.voicemediacontroller.media.MediaControlGateway
 import ru.lsn03.voicemediacontroller.media.MediaControlGatewayImpl
 import ru.lsn03.voicemediacontroller.media.MediaControllerProvider
@@ -23,6 +25,7 @@ import ru.lsn03.voicemediacontroller.media.NowPlayingGatewayImpl
 import ru.lsn03.voicemediacontroller.service.AudioRecorder
 import ru.lsn03.voicemediacontroller.service.VoiceService.Companion.SAMPLE_RATE
 import ru.lsn03.voicemediacontroller.tts.SpeechGateway
+import ru.lsn03.voicemediacontroller.tts.SpeechGatewayImpl
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 import javax.inject.Singleton
 
@@ -80,5 +83,18 @@ object AppModule {
         audioManager: AudioManager,
         handler: Handler,
     ): AudioDucker = AudioDuckerImpl(audioManager, handler)
+
+    @Provides
+    @Singleton
+    fun provideSpeechGateway(impl: SpeechGatewayImpl): SpeechGateway = impl
+
+
+    @Provides
+    @Singleton
+    fun provideSoundPoolProvider(
+        @ApplicationContext ctx: Context,
+        soundPrefs: SoundPrefs
+    ): SoundPoolProvider = SoundPoolProvider(ctx, soundPrefs)
+
 }
 

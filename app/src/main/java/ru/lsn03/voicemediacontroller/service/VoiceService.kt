@@ -6,37 +6,32 @@ import android.app.*
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.media.AudioAttributes
 import android.media.SoundPool
 import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import androidx.core.content.edit
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import dagger.hilt.android.AndroidEntryPoint
-import ru.lsn03.voicemediacontroller.R
 import ru.lsn03.voicemediacontroller.action.ActionExecutorProvider
 import ru.lsn03.voicemediacontroller.action.VoiceAction
 import ru.lsn03.voicemediacontroller.audio.AudioManagerControllerProvider
 import ru.lsn03.voicemediacontroller.audio.ducker.AudioDucker
+import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPoolProvider
+import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPrefs
 import ru.lsn03.voicemediacontroller.command.CommandBinding
 import ru.lsn03.voicemediacontroller.command.CommandMatcher
+import ru.lsn03.voicemediacontroller.di.TtsManager
 import ru.lsn03.voicemediacontroller.events.VoiceEvents
 import ru.lsn03.voicemediacontroller.media.MediaControlGateway
 import ru.lsn03.voicemediacontroller.media.NowPlayingGateway
-import ru.lsn03.voicemediacontroller.tts.SpeechGateway
-import ru.lsn03.voicemediacontroller.tts.SpeechGatewayImpl
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.VOICE_CHANNEL
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
-import java.util.*
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -56,9 +51,18 @@ class VoiceService : Service() {
 
     private lateinit var voiceCoordinator: VoiceCoordinator
 
-    private lateinit var actionExecutorProvider: ActionExecutorProvider
-    private lateinit var speechGateway: SpeechGateway
+    @Inject
+    lateinit var actionExecutorProvider: ActionExecutorProvider
 
+    @Inject
+    lateinit var soundPoolProvider: SoundPoolProvider
+
+    @Inject
+    lateinit var soundPrefs: SoundPrefs
+
+
+    @Inject
+    lateinit var ttsManager: TtsManager
 
     @Inject
     lateinit var audioRecorder: AudioRecorder
@@ -79,12 +83,9 @@ class VoiceService : Service() {
     lateinit var audioDucker: AudioDucker
 
     private var isListeningCommand = false
-    private var tts: TextToSpeech? = null
 
-    @Volatile
-    private var ttsReady: Boolean = false
-
-    private val handler = Handler(Looper.getMainLooper())
+    @Inject
+    lateinit var handler: Handler
 
     private val commandTimeoutRunnable = Runnable {
         if (isListeningCommand) {
@@ -131,26 +132,25 @@ class VoiceService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         intent?.extras?.let { b ->
             if (b.containsKey(KEY_HAPPY_VOL)) {
-                happyVol = b.getFloat(KEY_HAPPY_VOL).coerceIn(0f, 1f)
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit { putFloat(KEY_HAPPY_VOL, happyVol) }
-                Log.d(APPLICATION_NAME, "happyVol=$happyVol")
+                soundPrefs.setHappyVol(b.getFloat(KEY_HAPPY_VOL))
+                Log.d(APPLICATION_NAME, "VoiceService::onstartCommand happyVol=$happyVol")
             }
             if (b.containsKey(KEY_SAD_VOL)) {
-                sadVol = b.getFloat(KEY_SAD_VOL).coerceIn(0f, 1f)
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit { putFloat(KEY_SAD_VOL, sadVol) }
-                Log.d(APPLICATION_NAME, "sadVol=$sadVol")
+                soundPrefs.setSadVol(b.getFloat(KEY_SAD_VOL))
+                Log.d(APPLICATION_NAME, "VoiceService::onstartCommand sadVol=$sadVol")
             }
         }
+
 
         when (intent?.action) {
             ACTION_PREVIEW_WAKE -> {
                 Log.d(APPLICATION_NAME, "Preview WAKE")
-                playHappy()
+                soundPoolProvider.playHappy()
             }
 
             ACTION_PREVIEW_SLEEP -> {
                 Log.d(APPLICATION_NAME, "Preview SLEEP")
-                playSad()
+                soundPoolProvider.playSad()
             }
 
             ACTION_OPEN_TTS_INSTALL -> {
@@ -172,19 +172,16 @@ class VoiceService : Service() {
         Log.i(APPLICATION_NAME, "VoiceService onCreate()")
         super.onCreate()
 
+        soundPrefs.init()
+        soundPoolProvider.init()
 
-
-        tts = initializeTts()
-
-        initializeActionExecutorProvider()
+        ttsManager.init(
+            onStart = { audioDucker.start() },
+            onStop = { audioDucker.stop() },
+            onNoTts = { showTtsFixNotification("В системе не настроен движок синтеза речи...") }
+        )
 
         initializeVoskModel()
-
-        // prefs
-        initializePref()
-
-        // SoundPool
-        initializeSoundPool()
 
         startListening()
     }
@@ -214,12 +211,7 @@ class VoiceService : Service() {
 
         handler.removeCallbacksAndMessages(null) // опционально, если хочешь «обнулить очередь»
 
-        handler.post {
-            tts?.stop()
-            tts?.shutdown()
-            tts = null
-            ttsReady = false
-        }
+        ttsManager.shutdown()
     }
 
     override fun onBind(intent: Intent?): IBinder? {
@@ -268,7 +260,7 @@ class VoiceService : Service() {
         vosk.resetCommand()
         vosk.resetWake()
 
-        playSad() //— оставь как тебе нужно (у тебя оно уже есть и тут, и в handleCommand)
+        soundPoolProvider.playSad() //— оставь как тебе нужно (у тебя оно уже есть и тут, и в handleCommand)
         publishRecognizedText("Слушаю...")
         Log.d(APPLICATION_NAME, "VoiceService::resetToWakeModeInternal")
     }
@@ -313,49 +305,6 @@ class VoiceService : Service() {
             .build()
     }
 
-    private fun initializeActionExecutorProvider() {
-        speechGateway = SpeechGatewayImpl(
-            handler = handler,
-            isReady = { ttsReady },
-            ttsProvider = { tts }
-        )
-
-        actionExecutorProvider = ActionExecutorProvider(
-            audioManagerControllerProvider,
-            mediaControlGateway,
-            speechGateway,
-            nowPlayingGateway
-        )
-
-
-    }
-
-    private fun initializeSoundPool() {
-        val attrs = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_MEDIA)
-            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-            .build()
-
-
-        soundPool = SoundPool.Builder()
-            .setMaxStreams(2)
-            .setAudioAttributes(attrs)
-            .build()
-
-        soundPool?.setOnLoadCompleteListener { _, sampleId, status ->
-            Log.d(APPLICATION_NAME, "SoundPool onLoadComplete sampleId=$sampleId status=$status")
-        }
-        sndHappy = soundPool!!.load(this, R.raw.start_water, 1)
-        sndSad = soundPool!!.load(this, R.raw.end_water, 1)
-
-        Log.d(APPLICATION_NAME, "SoundPool load ids: happy=$sndHappy sad=$sndSad")
-    }
-
-    private fun initializePref() {
-        val sp = getSharedPreferences(PREFS, MODE_PRIVATE)
-        happyVol = sp.getFloat(KEY_HAPPY_VOL, 0.6f)
-        sadVol = sp.getFloat(KEY_SAD_VOL, 0.6f)
-    }
 
     private fun initializeVoskModel() {
         vosk.start()
@@ -364,44 +313,10 @@ class VoiceService : Service() {
             vosk,
             ::handleCommandText,
             publishRecognizedText = ::publishRecognizedText,
-            playHappy = ::playHappy,
+            playHappy = soundPoolProvider::playHappy,
             switchToCommandModeInternal = ::switchToCommandModeInternal,
             resetToWakeModeInternal = ::resetToWakeModeInternal,
         )
-    }
-
-    private fun initializeTts(): TextToSpeech = TextToSpeech(applicationContext) { status ->
-        ttsReady = (status == TextToSpeech.SUCCESS)
-
-        Log.d(APPLICATION_NAME, "initialization TTS,status=$status")
-        if (ttsReady) {
-            //                tts?.language = Locale("ru", "RU") // или Locale.getDefault()
-            tts?.language = Locale.getDefault()
-
-            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String) {
-                    // onStart приходит не на main thread
-                    handler.post { audioDucker.start() }
-                }
-
-                override fun onDone(utteranceId: String) {
-                    handler.post { audioDucker.stop() }
-                }
-
-                override fun onError(utteranceId: String) {
-                    handler.post { audioDucker.stop() }
-                }
-            })
-
-        }
-        if (status != TextToSpeech.SUCCESS) {
-            Log.d(
-                APPLICATION_NAME,
-                "В системе не настроен движок синтеза речи. Нажми «Установить» или открой «Настройки»."
-            )
-            showTtsFixNotification("В системе не настроен движок синтеза речи. Нажми «Установить» или открой «Настройки».")
-        }
-
     }
 
     private fun openTtsInstall() {
@@ -459,16 +374,6 @@ class VoiceService : Service() {
 
     private fun resetToWakeMode() {
         voiceCoordinator.resetToWakeMode()
-    }
-
-    private fun playHappy() {
-        val id = soundPool?.play(sndHappy, happyVol, happyVol, 1, 0, 1f) ?: 0
-        Log.d(APPLICATION_NAME, "VoiceService::playHappy soundId=$sndHappy streamId=$id vol=$happyVol")
-    }
-
-    private fun playSad() {
-        val id = soundPool?.play(sndSad, sadVol, sadVol, 1, 0, 1f) ?: 0
-        Log.d(APPLICATION_NAME, "VoiceService::playSad soundId=$sndSad streamId=$id vol=$sadVol")
     }
 
 }

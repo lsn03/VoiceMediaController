@@ -14,26 +14,16 @@ import ru.lsn03.voicemediacontroller.tts.SpeechGateway
 @InstallIn(ServiceComponent::class)
 object ServiceModule {
 
-//    @Provides
-//    fun provideSpeechGateway(
-//        handler: Handler,
-//        service: Service // или Context, см. ниже
-//    ): SpeechGateway {
-//        // Тут проблема: нужен доступ к ttsReady/ttsProvider из VoiceService
-//        // Поэтому этот вариант заработает только после выноса TTS в TtsManager (следующий шаг).
-//        TODO()
-//    }
-//
-//    @Provides
-//    fun provideActionExecutorProvider(
-//        audioManagerControllerProvider: AudioManagerControllerProvider,
-//        mediaControlGateway: MediaControlGateway,
-//        nowPlayingGateway: NowPlayingGateway,
-//        speechGateway: SpeechGateway,
-//    ): ActionExecutorProvider = ActionExecutorProvider(
-//        audioManagerControllerProvider,
-//        mediaControlGateway,
-//        speechGateway,
-//        nowPlayingGateway,
-//    )
+    @Provides
+    fun provideActionExecutorProvider(
+        audioManagerControllerProvider: AudioManagerControllerProvider,
+        mediaControlGateway: MediaControlGateway,
+        nowPlayingGateway: NowPlayingGateway,
+        speechGateway: SpeechGateway,
+    ): ActionExecutorProvider = ActionExecutorProvider(
+        audioManagerControllerProvider,
+        mediaControlGateway,
+        speechGateway,
+        nowPlayingGateway,
+    )
 }
