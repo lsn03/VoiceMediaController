@@ -11,11 +11,8 @@ import ru.lsn03.voicemediacontroller.utils.Utilities.MODEL_NAME
 import java.io.File
 import java.io.IOException
 
-
-
 class VoskEngine(
-    private val context: Context,
-    private val sampleRate: Int,
+    private val context: Context
 ) {
 
     private lateinit var model: Model

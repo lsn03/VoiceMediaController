@@ -2,6 +2,9 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+
+    alias(libs.plugins.hilt)
+    kotlin("kapt")
 }
 
 android {
@@ -30,6 +33,12 @@ android {
     }
     kotlinOptions {
         jvmTarget = "11"
+    }
+    hilt {
+        enableAggregatingTask = false
+    }
+    kapt {
+        correctErrorTypes = true
     }
     buildFeatures {
         compose = true
@@ -61,5 +70,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.media3.session)
     implementation(libs.vosk.android)
+    implementation(libs.hilt.android)
+    kapt(libs.hilt.compiler)
+    implementation("com.squareup:javapoet:1.13.0")
+
 
 }
