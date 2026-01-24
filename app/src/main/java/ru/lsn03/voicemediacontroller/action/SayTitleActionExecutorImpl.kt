@@ -1,7 +1,5 @@
 package ru.lsn03.voicemediacontroller.action
 
-import android.media.MediaMetadata
-import ru.lsn03.voicemediacontroller.media.MediaControllerProvider
 import ru.lsn03.voicemediacontroller.media.NowPlayingGateway
 import ru.lsn03.voicemediacontroller.tts.SpeechGateway
 
