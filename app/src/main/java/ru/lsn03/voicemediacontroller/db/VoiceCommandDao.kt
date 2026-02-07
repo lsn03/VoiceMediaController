@@ -15,9 +15,6 @@ interface VoiceCommandDao {
     @Query("SELECT * FROM voice_phrase")
     fun observeAllPhrases(): Flow<List<VoicePhraseEntity>>
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertPhrase(p: VoicePhraseEntity): Long
-
     @Query("UPDATE voice_phrase SET enabled = :enabled WHERE id = :id")
     suspend fun setEnabled(id: Long, enabled: Boolean)
 
@@ -29,5 +26,29 @@ interface VoiceCommandDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSettings(s: VoiceWakePhraseSettingEntity)
+
+    @Query("SELECT * FROM voice_phrase WHERE [action] = :action ORDER BY id ASC")
+    fun observePhrasesByAction(action: String): Flow<List<VoicePhraseEntity>>
+
+    @Query("SELECT COUNT(*) FROM voice_phrase WHERE [action] = :action AND enabled = 1")
+    suspend fun countEnabledByAction(action: String): Int
+
+    @Query("SELECT [action] FROM voice_phrase WHERE id = :id LIMIT 1")
+    suspend fun getActionByPhraseId(id: Long): String?
+
+    @Query("DELETE FROM voice_phrase WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("UPDATE voice_phrase SET phrase = :phrase, normalized = :normalized WHERE id = :id")
+    suspend fun updateText(id: Long, phrase: String, normalized: String)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertPhrase(entity: VoicePhraseEntity): Long
+
+    @Query("DELETE FROM voice_phrase WHERE [action] = :action")
+    suspend fun deleteByAction(action: String)
+
+    @Query("SELECT * FROM voice_phrase WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): VoicePhraseEntity?
 
 }

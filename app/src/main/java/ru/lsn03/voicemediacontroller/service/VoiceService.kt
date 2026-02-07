@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlarmManager
 import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
@@ -44,6 +45,7 @@ class VoiceService : Service() {
         const val ACTION_OPEN_TTS_SETTINGS = "ru.lsn03.voicemediacontroller.action.OPEN_TTS_SETTINGS"
         const val NOTIF_TTS_HELP_ID = 2
 
+        private const val NOTIF_ID = 1
     }
 
     @Inject
@@ -83,6 +85,10 @@ class VoiceService : Service() {
     private val KEY_HAPPY_VOL = "happy_vol"
     private val KEY_SAD_VOL = "sad_vol"
 
+
+    @Volatile private var currentWake: String = "Джарвис"
+
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
 
@@ -120,8 +126,8 @@ class VoiceService : Service() {
         }
 
 
-        val notification = createNotification()
-        startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        val notification = createNotification(currentWake)
+        startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         return START_STICKY
     }
 
@@ -144,6 +150,16 @@ class VoiceService : Service() {
         // ВАЖНО: collect грамматик отдельно (тоже один раз)
         Log.d(APPLICATION_NAME, "Subscribing to grammars")
         serviceScope.launch {
+            repo.observeWakeWord()
+                .collect { wake ->
+                    Log.d(APPLICATION_NAME, "Wake word updated: $wake")
+                    currentWake = wake
+                    voiceCoordinator.setWakeWord(wake)
+                    updateForegroundNotification(wake)
+                }
+        }
+
+        serviceScope.launch {
             // лучше использовать repo.grammars(serviceScope), раз ты его уже сделал
             repo.grammars(this).collect { g ->
                 Log.d(APPLICATION_NAME, "Applying grammars: wake=${g.wakeWordGrammarJson.length}, cmd=${g.commandGrammarJson.length}")
@@ -153,6 +169,11 @@ class VoiceService : Service() {
 
 
         startListening()
+    }
+
+    private fun updateForegroundNotification(wake: String) {
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(NOTIF_ID, createNotification(wake))
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -212,13 +233,17 @@ class VoiceService : Service() {
         LocalBroadcastManager.getInstance(applicationContext).sendBroadcast(intent)
     }
 
-    private fun createNotification(): Notification {
+    private fun createNotification(wake: String): Notification {
+        val w = wake.trim().ifBlank { "Джарвис" }
+        val titleWake = w.replaceFirstChar { it.uppercaseChar() }
+
         return NotificationCompat.Builder(this, VOICE_CHANNEL)
-            .setContentTitle("🎤 Слушает Джарвис")
-            .setContentText("Говори 'Джарвис, следующий трек'")
+            .setContentTitle("🎤 Слушает $titleWake")
+            .setContentText("Говори '$titleWake, следующий трек'")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
+            .setOnlyAlertOnce(true) // важно, чтобы не дёргало уведомлением при обновлении
             .build()
     }
 
