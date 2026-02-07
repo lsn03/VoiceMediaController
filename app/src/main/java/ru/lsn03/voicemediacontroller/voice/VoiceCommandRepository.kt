@@ -1,5 +1,6 @@
 package ru.lsn03.voicemediacontroller.voice
 
+import android.database.sqlite.SQLiteConstraintException
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 import android.util.Log
@@ -14,7 +15,9 @@ import kotlinx.coroutines.flow.stateIn
 import org.json.JSONObject
 import ru.lsn03.voicemediacontroller.action.VoiceAction
 import ru.lsn03.voicemediacontroller.command.CommandBinding
+import ru.lsn03.voicemediacontroller.db.DbSeeder.defaultPhrases
 import ru.lsn03.voicemediacontroller.db.VoiceCommandDao
+import ru.lsn03.voicemediacontroller.db.VoicePhraseEntity
 import ru.lsn03.voicemediacontroller.db.VoiceWakePhraseSettingEntity
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import javax.inject.Inject
@@ -24,6 +27,77 @@ import javax.inject.Singleton
 class VoiceCommandRepository @Inject constructor(
     private val dao: VoiceCommandDao
 ) {
+
+    fun observePhrases(action: VoiceAction): Flow<List<VoicePhraseEntity>> =
+        dao.observePhrasesByAction(action.name)
+
+    suspend fun addPhrase(action: VoiceAction, phrase: String): Result<Unit> {
+        val raw = phrase.trim()
+        if (raw.isBlank()) return Result.failure(IllegalArgumentException("EMPTY"))
+
+        val normalized = normalize(raw)
+
+        return runCatching {
+            dao.insertPhrase(
+                VoicePhraseEntity(
+                    action = action.name,
+                    phrase = raw,
+                    normalized = normalized,
+                    enabled = true
+                )
+            )
+        }.recoverCatching { e ->
+            // unique(normalized) -> "duplicate"
+            if (e is SQLiteConstraintException) throw IllegalStateException("DUPLICATE")
+            throw e
+        }.map { }
+    }
+
+    suspend fun setPhraseEnabled(id: Long, enabled: Boolean): Result<Unit> {
+        val action = dao.getActionByPhraseId(id) ?: return Result.failure(IllegalStateException("NOT_FOUND"))
+
+        if (!enabled) {
+            val cnt = dao.countEnabledByAction(action)
+            if (cnt <= 1) return Result.failure(IllegalStateException("LAST_ENABLED"))
+        }
+
+        return runCatching {
+            dao.setEnabled(id, enabled)
+        }
+    }
+
+    suspend fun deletePhrase(id: Long): Result<Unit> {
+//        val action = dao.getActionByPhraseId(id) ?: return Result.failure(IllegalStateException("NOT_FOUND"))
+        val row = dao.getById(id) ?: return Result.failure(IllegalStateException("NOT_FOUND"))
+
+        // Строго: запрещаем удаление, если это может убрать последнюю enabled.
+        // Чтобы сделать строго, добавь dao.getById(id) и проверь enabled конкретной строки.
+        if (row.enabled) {
+            val cnt = dao.countEnabledByAction(row.action)
+            if (cnt <= 1) return Result.failure(IllegalStateException("LAST_ENABLED"))
+        }
+        return runCatching { dao.deleteById(id) }
+    }
+
+    suspend fun updatePhraseText(id: Long, newText: String): Result<Unit> {
+        val raw = newText.trim()
+        if (raw.isBlank()) return Result.failure(IllegalArgumentException("EMPTY"))
+
+        val normalized = normalize(raw)
+
+        return runCatching {
+            dao.updateText(id, raw, normalized)
+        }.recoverCatching { e ->
+            if (e is SQLiteConstraintException) throw IllegalStateException("DUPLICATE")
+            throw e
+        }
+    }
+
+    private fun normalize(s: String): String =
+        s.trim()
+            .lowercase()
+            .replace(Regex("\\s+"), " ")
+
 
     fun grammars(scope: CoroutineScope): StateFlow<VoskGrammars> =
         observeVoskGrammars()
@@ -69,18 +143,18 @@ class VoiceCommandRepository @Inject constructor(
         dao.upsertSettings(VoiceWakePhraseSettingEntity(wakeWord = if (ww.isBlank()) "джарвис" else ww))
     }
 
-    suspend fun addPhrase(action: VoiceAction, phrase: String) {
-        val p = phrase.trim()
-        if (p.isEmpty()) return
-        dao.insertPhrase(
-            ru.lsn03.voicemediacontroller.db.VoicePhraseEntity(
-                action = action.name,
-                phrase = p,
-                normalized = p.lowercase(),
-                enabled = true
-            )
-        )
-    }
+//    suspend fun addPhrase(action: VoiceAction, phrase: String) {
+//        val p = phrase.trim()
+//        if (p.isEmpty()) return
+//        dao.insertPhrase(
+//            ru.lsn03.voicemediacontroller.db.VoicePhraseEntity(
+//                action = action.name,
+//                phrase = p,
+//                normalized = p.lowercase(),
+//                enabled = true
+//            )
+//        )
+//    }
 
     private val MAX_JSON_CHARS = 50_000 // для твоих 23 команд хватит с огромным запасом
 
@@ -98,6 +172,34 @@ class VoiceCommandRepository @Inject constructor(
         }
         sb.append(']')
         return sb.toString()
+    }
+
+    suspend fun resetToDefaults(action: VoiceAction): Result<Unit> = runCatching {
+        // 1) удалить всё по action
+        dao.deleteByAction(action.name)
+
+        // 2) дефолты
+        val defaults: List<String> = defaultPhrases(action)
+
+        // 3) вставить
+        for (p in defaults) {
+            val raw = p.trim()
+            if (raw.isBlank()) continue
+            val n = normalize(raw)
+            try {
+                dao.insertPhrase(
+                    VoicePhraseEntity(
+                        action = action.name,
+                        phrase = raw,
+                        normalized = n,
+                        enabled = true
+                    )
+                )
+            } catch (e: SQLiteConstraintException) {
+                // unique(normalized) глобальный: фраза уже принадлежит другой команде
+                Log.w(APPLICATION_NAME, "Default phrase '$n' already used by another action. Skipped.")
+            }
+        }
     }
 
 

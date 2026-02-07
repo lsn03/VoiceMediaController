@@ -12,6 +12,9 @@ class VoiceCoordinator(
     private val effects: VoiceEffects,
     private val handler: Handler,
 ) {
+    @Volatile
+    private var wakeWord: String = "джарвис"
+
     private var lastUiUpdateMs = 0L
     private var lastWakeTriggerMs = 0L
     private val UI_THROTTLE_MS = 250L        // не чаще 4 раз/сек
@@ -34,6 +37,11 @@ class VoiceCoordinator(
             VoiceState.COMMAND_LISTENING -> handleCommandPcm(pcm, now)
         }
 
+    }
+
+    fun setWakeWord(word: String) {
+        Log.d(APPLICATION_NAME, "Coordinator wakeWord=$wakeWord")
+        wakeWord = word.trim().lowercase().ifBlank { "джарвис" }
     }
 
     fun onTimeout() {
@@ -70,7 +78,7 @@ class VoiceCoordinator(
                 Log.d(APPLICATION_NAME, "VoiceCoordinator::handleWakePcm WAKE final: $txt")
 
                 when {
-                    txt == "джарвис" -> {
+                    txt == wakeWord -> {
                         val now2 = SystemClock.elapsedRealtime()
                         if (now2 - lastWakeTriggerMs >= WAKE_DEBOUNCE_MS) {
                             lastWakeTriggerMs = now2
@@ -81,8 +89,8 @@ class VoiceCoordinator(
                         }
                     }
 
-                    txt.startsWith("джарвис ") -> {
-                        val cmd = txt.removePrefix("джарвис ").trim()
+                    txt.startsWith("$wakeWord ") -> {
+                        val cmd = txt.removePrefix("$wakeWord ").trim()
                         effects.publishText("Выполняю: $cmd")
                         effects.onFinalCommand(cmd)
                         // Остаёмся в WAKE
@@ -116,6 +124,7 @@ class VoiceCoordinator(
                 handler.removeCallbacks(timeoutRunnable)
                 effects.enterWake()
             }
+
             VoiceState.COMMAND_LISTENING -> {
                 effects.enterCommand()
                 handler.removeCallbacks(timeoutRunnable)

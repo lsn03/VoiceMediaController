@@ -35,11 +35,13 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.getSystemService
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import dagger.hilt.android.AndroidEntryPoint
 import ru.lsn03.voicemediacontroller.events.VoiceEvents
 import ru.lsn03.voicemediacontroller.service.VoiceService
 import ru.lsn03.voicemediacontroller.ui.AppRoot
 import ru.lsn03.voicemediacontroller.ui.theme.VoiceMediaControlTheme
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     private var recognizedStatus by mutableStateOf("Жду команду")

@@ -2,27 +2,17 @@ package ru.lsn03.voicemediacontroller.ui.screens.commands
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.launch
 
 private data class UiPhrase(
@@ -36,28 +26,27 @@ private data class UiPhrase(
 fun ActionDetailScreen(
     actionName: String,
     navUp: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    viewModel: ActionDetailViewModel = hiltViewModel()
 ) {
-    // TODO: заменить на ViewModel + Room
-    var phrases by remember {
-        mutableStateOf(
-            listOf(
-                UiPhrase(1, "пример фразы 1", true),
-                UiPhrase(2, "пример фразы 2", true),
-            )
-        )
+    // phrases из БД
+    val phrases by viewModel.phrases.collectAsState()
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
+    // события ошибок
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { msg ->
+            snackbarHostState.showSnackbar(msg)
+        }
     }
 
     var sheetMode by remember { mutableStateOf<SheetMode?>(null) }
-    val scope = rememberCoroutineScope()
-
-    fun deletePhrase(p: UiPhrase) {
-        phrases = phrases.filterNot { it.id == p.id }
-        // TODO: repo.deletePhrase(p.id)
-    }
 
     Scaffold(
         modifier = modifier,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(actionName) },
@@ -79,8 +68,7 @@ fun ActionDetailScreen(
                             text = { Text("Сбросить к дефолту") },
                             onClick = {
                                 menu = false
-                                // TODO: repo.resetToDefaults(actionName)
-                                phrases = emptyList()
+                                viewModel.resetToDefaults()
                             }
                         )
                     }
@@ -94,27 +82,24 @@ fun ActionDetailScreen(
         }
     ) { inner ->
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(inner),
+            modifier = Modifier.fillMaxSize().padding(inner),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
             items(
                 items = phrases,
                 key = { it.id }
             ) { p ->
-                // Swipe-to-delete
                 val dismissState = rememberSwipeToDismissBoxState(
-                    confirmValueChange = { value ->
-                        if (value == SwipeToDismissBoxValue.EndToStart) {
-                            deletePhrase(p)
-                            true
-                        } else {
-                            false
-                        }
-                    },
+                    confirmValueChange = { false }, // не подтверждаем визуальное удаление
                     positionalThreshold = { it * 0.35f }
                 )
+
+                LaunchedEffect(dismissState.targetValue) {
+                    if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) {
+                        viewModel.deletePhrase(p.id)
+                        dismissState.reset()
+                    }
+                }
 
                 SwipeToDismissBox(
                     state = dismissState,
@@ -143,29 +128,29 @@ fun ActionDetailScreen(
                                 Switch(
                                     checked = p.enabled,
                                     onCheckedChange = { checked ->
-                                        phrases = phrases.map {
-                                            if (it.id == p.id) it.copy(enabled = checked) else it
-                                        }
-                                        // TODO: repo.setEnabled(p.id, checked)
+                                        viewModel.toggleEnabled(p.id, checked)
                                     }
                                 )
                             },
                             trailingContent = {
-                                IconButton(onClick = { sheetMode = SheetMode.Edit(p) }) {
+                                IconButton(onClick = {
+                                    sheetMode = SheetMode.Edit(UiPhrase(p.id, p.text, p.enabled))
+                                }) {
                                     Icon(Icons.Default.Edit, contentDescription = "Редактировать")
                                 }
                             },
-                            modifier = Modifier.clickable { sheetMode = SheetMode.Edit(p) }
+                            modifier = Modifier.clickable {
+                                sheetMode = SheetMode.Edit(UiPhrase(p.id, p.text, p.enabled))
+                            }
                         )
                     }
                 )
-
                 Divider()
             }
         }
     }
 
-    // Bottom sheet (add/edit)
+    // bottom sheet
     val current = sheetMode
     if (current != null) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -184,17 +169,8 @@ fun ActionDetailScreen(
                 },
                 onSave = { newText ->
                     when (current) {
-                        SheetMode.Add -> {
-                            val newId = (phrases.maxOfOrNull { it.id } ?: 0L) + 1
-                            phrases = phrases + UiPhrase(newId, newText, true)
-                            // TODO: repo.addPhrase(actionName, newText)
-                        }
-                        is SheetMode.Edit -> {
-                            phrases = phrases.map {
-                                if (it.id == current.phrase.id) it.copy(text = newText) else it
-                            }
-                            // TODO: repo.updatePhraseText(current.phrase.id, newText)
-                        }
+                        SheetMode.Add -> viewModel.addPhrase(newText)
+                        is SheetMode.Edit -> viewModel.editPhrase(current.phrase.id, newText)
                     }
                     scope.launch { sheetState.hide() }.invokeOnCompletion { sheetMode = null }
                 }
