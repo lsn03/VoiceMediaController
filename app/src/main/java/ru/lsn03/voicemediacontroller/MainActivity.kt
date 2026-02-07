@@ -5,8 +5,10 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -23,27 +25,34 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.getSystemService
-import androidx.lifecycle.Observer
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import dagger.hilt.android.AndroidEntryPoint
+import ru.lsn03.voicemediacontroller.events.VoiceEvents
 import ru.lsn03.voicemediacontroller.service.VoiceService
+import ru.lsn03.voicemediacontroller.ui.AppRoot
 import ru.lsn03.voicemediacontroller.ui.theme.VoiceMediaControlTheme
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Slider
-import androidx.compose.ui.text.style.TextAlign
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
+    private var recognizedStatus by mutableStateOf("Жду команду")
+
+    private val voiceReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == VoiceEvents.ACTION_RECOGNIZED_TEXT) {
+                recognizedStatus = intent.getStringExtra(VoiceEvents.EXTRA_TEXT) ?: "Нет текста"
+            }
+        }
+    }
 
     private fun isNotificationAccessGranted(): Boolean {
         val nm = getSystemService(NotificationManager::class.java)
@@ -65,6 +74,20 @@ class MainActivity : ComponentActivity() {
         activity.startActivity(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        LocalBroadcastManager.getInstance(this).registerReceiver(
+            voiceReceiver,
+            IntentFilter(VoiceEvents.ACTION_RECOGNIZED_TEXT)
+        )
+    }
+
+    override fun onStop() {
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(voiceReceiver)
+        super.onStop()
+    }
+
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -80,199 +103,26 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             VoiceMediaControlTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    VoiceControlScreen(modifier = Modifier.padding(innerPadding))
-                }
+                AppRoot(recognizedStatus = recognizedStatus)
             }
         }
-    }
-
-}
-
-private fun createNotificationChannel(context: Context) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val channel = NotificationChannel(
-            "voice_channel",
-            "Voice Control",
-            NotificationManager.IMPORTANCE_LOW
-        )
-
-        val systemService = getSystemService(context, NotificationManager::class.java)
-        systemService?.createNotificationChannel(channel)
 
     }
 
-}
 
-
-@Composable
-fun VoiceControlScreen(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-
-    val nm = remember { context.getSystemService(NotificationManager::class.java) }
-    val cn = remember { android.content.ComponentName(context, ru.lsn03.voicemediacontroller.service.JarvisNotificationListener::class.java) }
-
-    fun isNotifAccessGranted(): Boolean = nm.isNotificationListenerAccessGranted(cn)
-
-    var notifAccess by remember { mutableStateOf(false) }
-    var listenerConnected by remember { mutableStateOf(false) }
-
-
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val scrollState = rememberScrollState()
-
-    val prefs = remember { context.getSharedPreferences("jarvis_prefs", Context.MODE_PRIVATE) }
-    var happyVol by remember { mutableStateOf(prefs.getFloat("happy_vol", 0.6f)) }
-    var sadVol by remember { mutableStateOf(prefs.getFloat("sad_vol", 0.6f)) }
-
-    fun sendVolumes() {
-        val i = Intent(context, VoiceService::class.java).apply {
-            putExtra("happy_vol", happyVol)
-            putExtra("sad_vol", sadVol)
-        }
-        ContextCompat.startForegroundService(context, i)
-    }
-
-    var isRunning by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Остановлен") }
-    var recognizedStatus by remember { mutableStateOf("Нет текста") }
-
-    val micPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            ContextCompat.startForegroundService(context, Intent(context, VoiceService::class.java))
-            isRunning = true
-            status = "Слушает Джарвис..."
-        } else {
-            isRunning = false
-            status = "Нет разрешения на микрофон"
-        }
-    }
-
-    DisposableEffect(lifecycleOwner) {
-        val observer = Observer<String> { text -> recognizedStatus = text }
-        VoiceService.recognizedText.observe(lifecycleOwner, observer)
-        onDispose { VoiceService.recognizedText.removeObserver(observer) }
-    }
-
-    LaunchedEffect(Unit) {
-        val granted = ContextCompat.checkSelfPermission(context, RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED
-        if (granted) {
-            ContextCompat.startForegroundService(context, Intent(context, VoiceService::class.java))
-            isRunning = true
-            status = "Слушает Джарвис..."
-        } else {
-            micPermissionLauncher.launch(RECORD_AUDIO)
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            notifAccess = isNotifAccessGranted()
-            listenerConnected = ru.lsn03.voicemediacontroller.service.JarvisNotificationListener.connected
-            kotlinx.coroutines.delay(1000)
-        }
-    }
-
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState)
-            .padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-
-
-        Text(text = status, style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
-        Text(text = recognizedStatus, modifier = Modifier.padding(top = 8.dp), textAlign = TextAlign.Center)
-
-        if (notifAccess && !listenerConnected) {
-            Text(
-                text = "Доступ к уведомлениям включён, но сервис не подключился.\nОткрой настройки доступа и выключи/включи переключатель для приложения.",
-                modifier = Modifier.padding(top = 16.dp),
-                textAlign = TextAlign.Center,
-                color = androidx.compose.ui.graphics.Color(0xFFB00020) // красный/ошибка
+    private fun createNotificationChannel(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                "voice_channel",
+                "Voice Control",
+                NotificationManager.IMPORTANCE_LOW
             )
 
-            Button(
-                modifier = Modifier.padding(top = 8.dp),
-                onClick = {
-                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                }
-            ) {
-                Text("Переподключить доступ")
-            }
+            val systemService = getSystemService(context, NotificationManager::class.java)
+            systemService?.createNotificationChannel(channel)
+
         }
 
-
-        Button(
-            modifier = Modifier.padding(top = 16.dp),
-            onClick = {
-                if (isRunning) {
-                    context.stopService(Intent(context, VoiceService::class.java))
-                    isRunning = false
-                    status = "Остановлен"
-                } else {
-                    val granted = ContextCompat.checkSelfPermission(context, RECORD_AUDIO) ==
-                            PackageManager.PERMISSION_GRANTED
-                    if (granted) {
-                        ContextCompat.startForegroundService(context, Intent(context, VoiceService::class.java))
-                        isRunning = true
-                        status = "Слушает Джарвис..."
-                    } else {
-                        micPermissionLauncher.launch(RECORD_AUDIO)
-                    }
-                }
-            }
-        ) { Text(if (isRunning) "Stop" else "Start") }
-
-        Text("Громкость: Wake (весёлая)", modifier = Modifier.padding(top = 24.dp))
-        Slider(
-            value = happyVol,
-            onValueChange = { v ->
-                happyVol = v
-                prefs.edit().putFloat("happy_vol", v).apply()
-                sendVolumes()
-            },
-            valueRange = 0f..1f
-        )
-
-        Button(
-            modifier = Modifier.padding(top = 8.dp),
-            onClick = {
-                val i = Intent(context, VoiceService::class.java).apply {
-                    action = "ru.lsn03.voicemediacontroller.action.PREVIEW_WAKE"
-                    putExtra("happy_vol", happyVol)
-                    putExtra("sad_vol", sadVol)
-                }
-                ContextCompat.startForegroundService(context, i)
-            }
-        ) { Text("Прослушать wake") }
-
-        Text("Громкость: Sleep (грустная)", modifier = Modifier.padding(top = 16.dp))
-        Slider(
-            value = sadVol,
-            onValueChange = { v ->
-                sadVol = v
-                prefs.edit().putFloat("sad_vol", v).apply()
-                sendVolumes()
-            },
-            valueRange = 0f..1f
-        )
-
-        Button(
-            modifier = Modifier.padding(top = 8.dp),
-            onClick = {
-                val i = Intent(context, VoiceService::class.java).apply {
-                    action = "ru.lsn03.voicemediacontroller.action.PREVIEW_SLEEP"
-                    putExtra("happy_vol", happyVol)
-                    putExtra("sad_vol", sadVol)
-                }
-                ContextCompat.startForegroundService(context, i)
-            }
-        ) { Text("Прослушать sleep") }
     }
+
 }

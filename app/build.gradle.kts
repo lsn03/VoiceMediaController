@@ -2,6 +2,10 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+
+    alias(libs.plugins.hilt)
+    kotlin("kapt")
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -10,10 +14,10 @@ android {
 
     defaultConfig {
         applicationId = "ru.lsn03.voicemediacontroller"
-        minSdk = 30
+        minSdk = 29
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.0.3"
+        versionCode = 6
+        versionName = "1.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -30,6 +34,12 @@ android {
     }
     kotlinOptions {
         jvmTarget = "11"
+    }
+    hilt {
+        enableAggregatingTask = false
+    }
+    kapt {
+        correctErrorTypes = true
     }
     buildFeatures {
         compose = true
@@ -55,7 +65,25 @@ dependencies {
     debugImplementation(libs.androidx.ui.test.manifest)
 
 
+
+    // Навигация
+    implementation(libs.androidx.navigation.compose)
+    // ViewModel в Compose
+    implementation(libs.androidx.lifecycle.viewmodel.compose.v285)
+    // (Опционально) если будешь делать @HiltViewModel и hiltViewModel()
+    implementation(libs.androidx.hilt.navigation.compose)
+
+    implementation(libs.androidx.localbroadcastmanager)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.media3.session)
     implementation(libs.vosk.android)
+    implementation(libs.hilt.android)
+    kapt(libs.hilt.compiler)
+    implementation("com.squareup:javapoet:1.13.0")
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
 
 }
