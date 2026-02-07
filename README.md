@@ -8,6 +8,11 @@ Wake-word по умолчанию: **«джарвис»**.
 
 Для команд «Скажи время» и «Скажи название аудио-дорожки» используется TTS (Text-to-Speech) — приложение проговаривает результат голосом.
 
+Скачать последний релиз: https://github.com/lsn03/VoiceMediaController/releases/latest
+
+Все релизы: https://github.com/lsn03/VoiceMediaController/releases
+
+
 ## Дефолтные команды
 
 | Действие                     | Фразы по умолчанию                      |
