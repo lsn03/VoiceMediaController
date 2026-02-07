@@ -154,7 +154,7 @@ class VoiceService : Service() {
                 .collect { wake ->
                     Log.d(APPLICATION_NAME, "Wake word updated: $wake")
                     currentWake = wake
-                    voiceCoordinator.setWakeWord(wake)
+                    voiceCoordinator.setWakeWord(currentWake)
                     updateForegroundNotification(wake)
                 }
         }

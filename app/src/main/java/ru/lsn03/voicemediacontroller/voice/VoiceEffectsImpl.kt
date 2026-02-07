@@ -65,6 +65,7 @@ class VoiceEffectsImpl(
     }
 
     override fun enterWake() {
+        audioDucker.stop()
         vosk.resetCommand()
         vosk.resetWake()
         soundPoolProvider.playSad()
