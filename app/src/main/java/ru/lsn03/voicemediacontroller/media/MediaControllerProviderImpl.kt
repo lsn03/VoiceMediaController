@@ -6,8 +6,10 @@ import android.content.Context
 import android.content.Context.MEDIA_SESSION_SERVICE
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
+import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.util.Log
+import kotlinx.coroutines.delay
 import ru.lsn03.voicemediacontroller.service.JarvisNotificationListener
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 
@@ -37,6 +39,7 @@ class MediaControllerProviderImpl(
                 APPLICATION_NAME,
                 "VoiceService::getTopMediaController Notification access не готов: включите доступ и перезапустите приложение/сервис"
             )
+
             return null
         }
 

@@ -40,7 +40,7 @@ class VoiceCoordinator(
     }
 
     fun setWakeWord(word: String) {
-        Log.d(APPLICATION_NAME, "Coordinator wakeWord=$wakeWord")
+        Log.d(APPLICATION_NAME, "Coordinator::setWakeWord new wake word=$word")
         wakeWord = word.trim().lowercase().ifBlank { "джарвис" }
     }
 
@@ -82,7 +82,8 @@ class VoiceCoordinator(
                         val now2 = SystemClock.elapsedRealtime()
                         if (now2 - lastWakeTriggerMs >= WAKE_DEBOUNCE_MS) {
                             lastWakeTriggerMs = now2
-                            effects.publishText("Джарвис! Слушаю команду...")
+                            var titleWakeWord = wakeWord.replaceFirstChar { it.uppercase() }
+                            effects.publishText("$titleWakeWord! Слушаю команду...")
                             transitionTo(VoiceState.COMMAND_LISTENING)
                         } else {
                             Log.d(APPLICATION_NAME, "Wake debounce: ignored")
