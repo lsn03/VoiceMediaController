@@ -108,10 +108,10 @@ dependencies {
     // (Опционально) если будешь делать @HiltViewModel и hiltViewModel()
     implementation(libs.androidx.hilt.navigation.compose)
 
-    implementation(libs.androidx.localbroadcastmanager)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.media3.session)
     implementation(libs.vosk.android)
     implementation(libs.hilt.android)

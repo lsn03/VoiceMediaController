@@ -16,20 +16,20 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import ru.lsn03.voicemediacontroller.audio.ducker.AudioDucker
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPoolProvider
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPrefs
 import ru.lsn03.voicemediacontroller.di.TtsManager
-import ru.lsn03.voicemediacontroller.events.VoiceEvents
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.VOICE_CHANNEL
 import ru.lsn03.voicemediacontroller.voice.VoiceCoordinator
 import ru.lsn03.voicemediacontroller.voice.VoiceEffects
 import ru.lsn03.voicemediacontroller.voice.repo.GrammarRepository
 import ru.lsn03.voicemediacontroller.voice.repo.WakeWordRepository
+import ru.lsn03.voicemediacontroller.voice.status.RecognizerStatus
+import ru.lsn03.voicemediacontroller.voice.status.RecognizerStatusBus
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 import javax.inject.Inject
 
@@ -81,6 +81,9 @@ class VoiceService : Service() {
 
     @Inject
     lateinit var handler: Handler
+
+    @Inject
+    lateinit var recognizerStatusBus: RecognizerStatusBus
 
 
     private var happyVol = 0.6f
@@ -215,7 +218,7 @@ class VoiceService : Service() {
             != PackageManager.PERMISSION_GRANTED
         ) {
             Log.e(APPLICATION_NAME, "No RECORD_AUDIO permission")
-            publishRecognizedText("Нет разрешения на микрофон")
+            recognizerStatusBus.post(RecognizerStatus.Error("Нет разрешения на микрофон"))
             return
         }
 
@@ -223,16 +226,9 @@ class VoiceService : Service() {
             onPcm = voiceCoordinator::onPcm,
             onError = { msg ->
                 Log.e(APPLICATION_NAME, msg)
-                publishRecognizedText(msg)
+                recognizerStatusBus.post(RecognizerStatus.Error(msg))
             }
         )
-    }
-
-    private fun publishRecognizedText(text: String) {
-        val intent = Intent(VoiceEvents.ACTION_RECOGNIZED_TEXT).apply {
-            putExtra(VoiceEvents.EXTRA_TEXT, text)
-        }
-        LocalBroadcastManager.getInstance(applicationContext).sendBroadcast(intent)
     }
 
     private fun createNotification(wake: String): Notification {

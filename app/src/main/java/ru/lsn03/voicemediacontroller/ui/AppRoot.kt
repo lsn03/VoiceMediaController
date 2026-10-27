@@ -29,9 +29,7 @@ import ru.lsn03.voicemediacontroller.ui.screens.home.HomeScreen
 import ru.lsn03.voicemediacontroller.ui.screens.settings.SettingsScreen
 
 @Composable
-fun AppRoot(
-    recognizedStatus: String,
-) {
+fun AppRoot() {
     val navController = rememberNavController()
 
     val topLevel = listOf(
@@ -49,7 +47,7 @@ fun AppRoot(
             modifier = Modifier.padding(inner)
         ) {
             composable(TopLevelDestination.Home.route) {
-                HomeScreen(recognizedStatus = recognizedStatus)
+                HomeScreen()
             }
             composable(TopLevelDestination.Commands.route) {
                 CommandsScreen(

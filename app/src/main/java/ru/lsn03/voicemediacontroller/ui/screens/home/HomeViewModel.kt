@@ -7,14 +7,19 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import ru.lsn03.voicemediacontroller.voice.repo.WakeWordRepository
+import ru.lsn03.voicemediacontroller.voice.status.RecognizerStatus
+import ru.lsn03.voicemediacontroller.voice.status.RecognizerStatusBus
 import javax.inject.Inject
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
-    wakeRepo: WakeWordRepository
+    wakeRepo: WakeWordRepository,
+    statusBus: RecognizerStatusBus,
 ) : ViewModel() {
 
     val wakeWord: StateFlow<String> =
         wakeRepo.observe()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
+    val status: StateFlow<RecognizerStatus> = statusBus.status
 }
