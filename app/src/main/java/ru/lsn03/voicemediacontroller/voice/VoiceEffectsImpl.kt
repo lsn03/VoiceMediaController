@@ -1,9 +1,6 @@
 package ru.lsn03.voicemediacontroller.voice
 
-import android.content.Context
-import android.content.Intent
 import android.util.Log
-import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import ru.lsn03.voicemediacontroller.action.ActionExecutorProvider
@@ -11,20 +8,20 @@ import ru.lsn03.voicemediacontroller.action.VoiceAction
 import ru.lsn03.voicemediacontroller.audio.ducker.AudioDucker
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPoolProvider
 import ru.lsn03.voicemediacontroller.command.CommandMatcher
-import ru.lsn03.voicemediacontroller.events.VoiceEvents
+import ru.lsn03.voicemediacontroller.core.text.TextPublisher
 import ru.lsn03.voicemediacontroller.text.TextNormalizer
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.voice.repo.VoicePhraseRepository
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 
 class VoiceEffectsImpl(
-    private val applicationContext: Context,
     private val actionExecutorProvider: ActionExecutorProvider,
     private val audioDucker: AudioDucker,
     private val vosk: VoskEngine,
     private val soundPoolProvider: SoundPoolProvider,
     private val phraseRepo: VoicePhraseRepository,
     private val normalizer: TextNormalizer,
+    private val publisher: TextPublisher,
 ) : VoiceEffects {
 
     @Volatile
@@ -43,10 +40,7 @@ class VoiceEffectsImpl(
     override fun start(scope: CoroutineScope) = startDbMatcher(scope)
 
     override fun publishText(text: String) {
-        val intent = Intent(VoiceEvents.ACTION_RECOGNIZED_TEXT).apply {
-            putExtra(VoiceEvents.EXTRA_TEXT, text)
-        }
-        LocalBroadcastManager.getInstance(applicationContext).sendBroadcast(intent)
+        publisher.publish(text)
     }
 
     override fun onFinalCommand(cmd: String) {

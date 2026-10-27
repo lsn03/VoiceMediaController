@@ -1,11 +1,9 @@
 package ru.lsn03.voicemediacontroller.di
 
-import android.content.Context
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.components.ServiceComponent
-import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.scopes.ServiceScoped
 import ru.lsn03.voicemediacontroller.action.ActionExecutorProvider
 import ru.lsn03.voicemediacontroller.audio.AudioManagerControllerProvider
@@ -13,6 +11,7 @@ import ru.lsn03.voicemediacontroller.audio.ducker.AudioDucker
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPoolProvider
 import ru.lsn03.voicemediacontroller.core.log.AppLogger
 import ru.lsn03.voicemediacontroller.core.speech.SpeechRecognizer
+import ru.lsn03.voicemediacontroller.core.text.TextPublisher
 import ru.lsn03.voicemediacontroller.core.time.Clock
 import ru.lsn03.voicemediacontroller.core.time.Scheduler
 import ru.lsn03.voicemediacontroller.media.MediaControlGateway
@@ -49,21 +48,21 @@ object ServiceModule {
     @Provides
     @ServiceScoped
     fun provideVoiceEffects(
-        @ApplicationContext ctx: Context,
         actionExecutorProvider: ActionExecutorProvider,
         audioDucker: AudioDucker,
         voskEngine: VoskEngine,
         soundPoolProvider: SoundPoolProvider,
         phraseRepo: VoicePhraseRepository,
         textNormalizer: TextNormalizer,
+        textPublisher: TextPublisher,
     ): VoiceEffects = VoiceEffectsImpl(
-        ctx,
         actionExecutorProvider = actionExecutorProvider,
         audioDucker = audioDucker,
         vosk = voskEngine,
         soundPoolProvider = soundPoolProvider,
         phraseRepo = phraseRepo,
         normalizer = textNormalizer,
+        publisher = textPublisher,
     )
 
     @Provides

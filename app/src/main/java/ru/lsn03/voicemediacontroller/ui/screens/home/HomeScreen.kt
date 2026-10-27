@@ -29,18 +29,21 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ru.lsn03.voicemediacontroller.service.JarvisNotificationListener
 import ru.lsn03.voicemediacontroller.service.VoiceService
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
+import ru.lsn03.voicemediacontroller.voice.status.RecognizerStatus
 
 @Composable
 fun HomeScreen(
-    recognizedStatus: String,
     modifier: Modifier = Modifier,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
     val wake by viewModel.wakeWord.collectAsState()
+    val status by viewModel.status.collectAsStateWithLifecycle()
+    val recognizedStatus = status.toDisplayText()
 
     val titleWake = wake.replaceFirstChar { it.uppercaseChar() }
 
@@ -175,4 +178,17 @@ private fun NotificationAccessBanner() {
 private fun statusString(titleWake: String): String {
    Log.d(APPLICATION_NAME, "HomeScreen::statusString titleWake=$titleWake")
     return "Слушает $titleWake..."
+}
+
+// WakeHint carries fully-formatted text (the coordinator / effects
+// already compose "Слышу: ..." / "Слушаю..." / etc. before publishing),
+// so render its partial verbatim; typed variants compose their own
+// strings. This preserves the legacy single-text-channel UX.
+private fun RecognizerStatus.toDisplayText(): String = when (this) {
+    RecognizerStatus.Idle -> "Жду команду"
+    is RecognizerStatus.WakeHint -> partial
+    is RecognizerStatus.WakeAccepted -> "$wakeTitleCased! Слушаю команду..."
+    is RecognizerStatus.CommandHint -> "Команда: $partial"
+    is RecognizerStatus.CommandExecuting -> "Выполняю: $command"
+    is RecognizerStatus.Error -> message
 }
