@@ -14,6 +14,7 @@ import org.robolectric.annotation.Config
 import ru.lsn03.voicemediacontroller.db.VoiceCommandDao
 import ru.lsn03.voicemediacontroller.db.VoicePhraseEntity
 import ru.lsn03.voicemediacontroller.db.VoiceWakePhraseSettingEntity
+import ru.lsn03.voicemediacontroller.text.TextNormalizer
 
 /** Characterization: PR 3/4 may update assertions when consolidating normalize/grammar builders. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -57,7 +58,7 @@ class GrammarBuilderCharacterizationTest {
             )
         )
 
-        val repo = VoiceCommandRepository(dao)
+        val repo = VoiceCommandRepository(dao, TextNormalizer())
 
         repo.observeVoskGrammars().test {
             val g = awaitItem()
@@ -79,7 +80,7 @@ class GrammarBuilderCharacterizationTest {
         )
         every { dao.observeEnabledPhrases() } returns flowOf(emptyList())
 
-        val repo = VoiceCommandRepository(dao)
+        val repo = VoiceCommandRepository(dao, TextNormalizer())
 
         repo.observeVoskGrammars().test {
             val g = awaitItem()

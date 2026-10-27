@@ -18,8 +18,13 @@ import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPrefs
 import ru.lsn03.voicemediacontroller.media.*
 import ru.lsn03.voicemediacontroller.service.AudioRecorder
 import ru.lsn03.voicemediacontroller.service.VoiceService.Companion.SAMPLE_RATE
+import ru.lsn03.voicemediacontroller.text.TextNormalizer
 import ru.lsn03.voicemediacontroller.tts.SpeechGateway
 import ru.lsn03.voicemediacontroller.tts.SpeechGatewayImpl
+import ru.lsn03.voicemediacontroller.voice.VoiceCommandRepository
+import ru.lsn03.voicemediacontroller.voice.VoiceCoordinatorConfig
+import ru.lsn03.voicemediacontroller.voice.VoiceStateMachine
+import ru.lsn03.voicemediacontroller.voice.WakeParser
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 import javax.inject.Singleton
 
@@ -89,6 +94,23 @@ object AppModule {
         @ApplicationContext ctx: Context,
         soundPrefs: SoundPrefs
     ): SoundPoolProvider = SoundPoolProvider(ctx, soundPrefs)
+
+    @Provides
+    @Singleton
+    fun provideTextNormalizer(): TextNormalizer = TextNormalizer()
+
+    @Provides
+    @Singleton
+    fun provideVoiceCoordinatorConfig(): VoiceCoordinatorConfig = VoiceCoordinatorConfig.default()
+
+    @Provides
+    @Singleton
+    fun provideVoiceStateMachine(): VoiceStateMachine = VoiceStateMachine()
+
+    @Provides
+    @Singleton
+    fun provideWakeParser(repo: VoiceCommandRepository): WakeParser =
+        WakeParser { repo.currentWakeWord() }
 
 }
 

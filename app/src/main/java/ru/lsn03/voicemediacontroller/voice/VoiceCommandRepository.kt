@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import org.json.JSONObject
 import ru.lsn03.voicemediacontroller.action.VoiceAction
@@ -19,14 +20,24 @@ import ru.lsn03.voicemediacontroller.db.DbSeeder.defaultPhrases
 import ru.lsn03.voicemediacontroller.db.VoiceCommandDao
 import ru.lsn03.voicemediacontroller.db.VoicePhraseEntity
 import ru.lsn03.voicemediacontroller.db.VoiceWakePhraseSettingEntity
+import ru.lsn03.voicemediacontroller.text.TextNormalizer
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class VoiceCommandRepository @Inject constructor(
-    private val dao: VoiceCommandDao
+    private val dao: VoiceCommandDao,
+    private val normalizer: TextNormalizer,
 ) {
+
+    // Latest wake word mirrored from observeWakeWord(). Written from the collector
+    // thread, read synchronously by WakeParser from the audio-callback thread;
+    // volatility is sufficient because the value is a String (atomic reference assignment).
+    @Volatile
+    private var cachedWakeWord: String = "джарвис"
+
+    fun currentWakeWord(): String = cachedWakeWord
 
     fun observePhrases(action: VoiceAction): Flow<List<VoicePhraseEntity>> =
         dao.observePhrasesByAction(action.name)
@@ -35,7 +46,7 @@ class VoiceCommandRepository @Inject constructor(
         val raw = phrase.trim()
         if (raw.isBlank()) return Result.failure(IllegalArgumentException("EMPTY"))
 
-        val normalized = normalize(raw)
+        val normalized = normalizer.normalize(raw)
 
         return runCatching {
             dao.insertPhrase(
@@ -83,7 +94,7 @@ class VoiceCommandRepository @Inject constructor(
         val raw = newText.trim()
         if (raw.isBlank()) return Result.failure(IllegalArgumentException("EMPTY"))
 
-        val normalized = normalize(raw)
+        val normalized = normalizer.normalize(raw)
 
         return runCatching {
             dao.updateText(id, raw, normalized)
@@ -92,12 +103,6 @@ class VoiceCommandRepository @Inject constructor(
             throw e
         }
     }
-
-    private fun normalize(s: String): String =
-        s.trim()
-            .lowercase()
-            .replace(Regex("\\s+"), " ")
-
 
     fun grammars(scope: CoroutineScope): StateFlow<VoskGrammars> =
         observeVoskGrammars()
@@ -123,6 +128,7 @@ class VoiceCommandRepository @Inject constructor(
         dao.observeSettings()
             .map { it?.wakeWord?.trim()?.lowercase().orEmpty() }
             .map { if (it.isBlank()) "джарвис" else it }
+            .onEach { cachedWakeWord = it }
 
     fun observeVoskGrammars(): Flow<VoskGrammars> =
         combine(observeWakeWord(), dao.observeEnabledPhrases()) { wake, rows ->
@@ -140,7 +146,9 @@ class VoiceCommandRepository @Inject constructor(
 
     suspend fun setWakeWord(newWord: String) {
         val ww = newWord.trim().lowercase()
-        dao.upsertSettings(VoiceWakePhraseSettingEntity(wakeWord = if (ww.isBlank()) "джарвис" else ww))
+        val effective = if (ww.isBlank()) "джарвис" else ww
+        cachedWakeWord = effective
+        dao.upsertSettings(VoiceWakePhraseSettingEntity(wakeWord = effective))
     }
 
 //    suspend fun addPhrase(action: VoiceAction, phrase: String) {
@@ -185,7 +193,7 @@ class VoiceCommandRepository @Inject constructor(
         for (p in defaults) {
             val raw = p.trim()
             if (raw.isBlank()) continue
-            val n = normalize(raw)
+            val n = normalizer.normalize(raw)
             try {
                 dao.insertPhrase(
                     VoicePhraseEntity(
