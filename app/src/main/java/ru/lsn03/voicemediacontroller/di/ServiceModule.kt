@@ -33,6 +33,7 @@ import ru.lsn03.voicemediacontroller.voice.WakeParser
 import ru.lsn03.voicemediacontroller.voice.repo.GrammarRepository
 import ru.lsn03.voicemediacontroller.voice.repo.VoicePhraseRepository
 import ru.lsn03.voicemediacontroller.voice.repo.WakeWordRepository
+import ru.lsn03.voicemediacontroller.voice.status.RecognizerStatusBus
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 
 @Module
@@ -105,7 +106,7 @@ object ServiceModule {
         grammarRepo: GrammarRepository,
         wakeRepo: WakeWordRepository,
         effects: VoiceEffects,
-        publisher: TextPublisher,
+        statusBus: RecognizerStatusBus,
         logger: AppLogger,
     ): VoicePipeline = VoicePipeline(
         audio = audio,
@@ -114,7 +115,7 @@ object ServiceModule {
         grammarRepo = grammarRepo,
         wakeRepo = wakeRepo,
         effects = effects,
-        publisher = publisher,
+        statusBus = statusBus,
         logger = logger,
     )
 

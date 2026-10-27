@@ -6,12 +6,13 @@ import kotlinx.coroutines.launch
 import ru.lsn03.voicemediacontroller.core.audio.AudioSource
 import ru.lsn03.voicemediacontroller.core.log.AppLogger
 import ru.lsn03.voicemediacontroller.core.speech.SpeechRecognizer
-import ru.lsn03.voicemediacontroller.core.text.TextPublisher
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.voice.VoiceCoordinator
 import ru.lsn03.voicemediacontroller.voice.VoiceEffects
 import ru.lsn03.voicemediacontroller.voice.repo.GrammarRepository
 import ru.lsn03.voicemediacontroller.voice.repo.WakeWordRepository
+import ru.lsn03.voicemediacontroller.voice.status.RecognizerStatus
+import ru.lsn03.voicemediacontroller.voice.status.RecognizerStatusBus
 
 class VoicePipeline(
     private val audio: AudioSource,
@@ -20,7 +21,7 @@ class VoicePipeline(
     private val grammarRepo: GrammarRepository,
     private val wakeRepo: WakeWordRepository,
     private val effects: VoiceEffects,
-    private val publisher: TextPublisher,
+    private val statusBus: RecognizerStatusBus,
     private val logger: AppLogger,
 ) {
 
@@ -53,7 +54,7 @@ class VoicePipeline(
             onPcm = coordinator::onPcm,
             onError = { msg ->
                 logger.e(APPLICATION_NAME, msg)
-                publisher.publish(msg)
+                statusBus.post(RecognizerStatus.Error(msg))
             },
         )
     }
