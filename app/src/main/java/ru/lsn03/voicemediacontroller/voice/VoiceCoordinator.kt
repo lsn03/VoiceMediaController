@@ -1,118 +1,143 @@
 package ru.lsn03.voicemediacontroller.voice
 
-import android.os.Handler
-import android.os.SystemClock
-import android.util.Log
+import ru.lsn03.voicemediacontroller.core.log.AppLogger
+import ru.lsn03.voicemediacontroller.core.speech.SpeechRecognizer
+import ru.lsn03.voicemediacontroller.core.speech.SpeechResult
+import ru.lsn03.voicemediacontroller.core.time.Clock
+import ru.lsn03.voicemediacontroller.core.time.Scheduler
+import ru.lsn03.voicemediacontroller.text.TextNormalizer
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
-import ru.lsn03.voicemediacontroller.vosk.VoskEngine
-import ru.lsn03.voicemediacontroller.vosk.VoskResult
 
 class VoiceCoordinator(
-    private val vosk: VoskEngine,
+    private val recognizer: SpeechRecognizer,
     private val effects: VoiceEffects,
-    private val handler: Handler,
+    private val wakeParser: WakeParser,
+    private val stateMachine: VoiceStateMachine,
+    private val scheduler: Scheduler,
+    private val clock: Clock,
+    private val logger: AppLogger,
+    private val normalizer: TextNormalizer,
+    private val config: VoiceCoordinatorConfig,
 ) {
+
+    // Wake-word fallback is still coordinator-local; the duplicate with VoiceCommandRepository
+    // is scheduled to be deduplicated in PR 4.
     @Volatile
     private var wakeWord: String = "джарвис"
 
+    // Throttling timestamps and the visible-state mirror are mutated from the audio
+    // callback thread exclusively; marked @Volatile so main-thread observers (timeout
+    // scheduler callback) read a consistent value.
+    @Volatile
     private var lastUiUpdateMs = 0L
+
+    @Volatile
     private var lastWakeTriggerMs = 0L
-    private val UI_THROTTLE_MS = 250L        // не чаще 4 раз/сек
-    private val WAKE_DEBOUNCE_MS = 1200L
-    private val commandTimeoutMs: Long = 10_000L
 
-    private var state: VoiceState = VoiceState.WAKE_LISTENING
+    // Coordinator-local view of the state. Mirrors the state machine, with the
+    // addition of a transient SWITCHING flag held while transition side-effects run.
+    @Volatile
+    private var state: VoiceState = stateMachine.state
 
-    private val timeoutRunnable = Runnable { onTimeout() }
-
+    // Sentinel key for the single command-timeout callback registered with the scheduler.
+    private object CommandTimeoutToken
 
     fun onPcm(pcm: ByteArray) {
+        val now = clock.elapsedRealtimeMs()
 
-        val now = SystemClock.elapsedRealtime()
-
-//        Log.d(APPLICATION_NAME, "VoiceCoordinator currentState=$state")
         when (state) {
             VoiceState.SWITCHING -> Unit
             VoiceState.WAKE_LISTENING -> handleWakePcm(pcm, now)
             VoiceState.COMMAND_LISTENING -> handleCommandPcm(pcm, now)
         }
-
     }
 
     fun setWakeWord(word: String) {
-        Log.d(APPLICATION_NAME, "Coordinator::setWakeWord new wake word=$word")
+        logger.d(APPLICATION_NAME, "Coordinator::setWakeWord new wake word=$word")
         wakeWord = word.trim().lowercase().ifBlank { "джарвис" }
     }
 
     fun onTimeout() {
         if (state == VoiceState.COMMAND_LISTENING) {
-            Log.d(APPLICATION_NAME, "VoiceCoordinator::onTimeout -> WAKE")
-            transitionTo(VoiceState.WAKE_LISTENING)
+            logger.d(APPLICATION_NAME, "VoiceCoordinator::onTimeout -> WAKE")
+            val next = stateMachine.on(VoiceStateEvent.CommandTimeout)
+            transitionTo(next)
         }
     }
 
     private fun handleCommandPcm(pcm: ByteArray, now: Long) {
-        when (val r = vosk.acceptCommand(pcm)) {
-            is VoskResult.Final -> {
-                Log.d(APPLICATION_NAME, "VoiceService:: CMD final: ${r.text}")
+        when (val r = recognizer.acceptCommand(pcm)) {
+            is SpeechResult.Final -> {
+                logger.d(APPLICATION_NAME, "VoiceService:: CMD final: ${r.text}")
                 effects.onFinalCommand(r.text)
-                transitionTo(VoiceState.WAKE_LISTENING)
+                val next = stateMachine.on(VoiceStateEvent.CommandRecognised)
+                transitionTo(next)
             }
 
-            is VoskResult.Partial -> {
+            is SpeechResult.Partial -> {
                 val partialText = r.text.trim()
-                if (partialText.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
+                if (partialText.isNotEmpty() && now - lastUiUpdateMs >= config.uiThrottleMs) {
                     lastUiUpdateMs = now
                     effects.publishText("Команда: $partialText")
                 }
             }
 
-            VoskResult.None -> Unit
+            SpeechResult.None -> Unit
         }
     }
 
     private fun handleWakePcm(pcm: ByteArray, now: Long) {
-        when (val r = vosk.acceptWake(pcm)) {
-            is VoskResult.Final -> {
-                val txt = normalize(r.text)
-                Log.d(APPLICATION_NAME, "VoiceCoordinator::handleWakePcm WAKE final: $txt")
+        when (val r = recognizer.acceptWake(pcm)) {
+            is SpeechResult.Final -> {
+                val txt = normalizer.normalize(r.text)
+                logger.d(APPLICATION_NAME, "VoiceCoordinator::handleWakePcm WAKE final: $txt")
 
-                when {
-                    txt == wakeWord -> {
-                        val now2 = SystemClock.elapsedRealtime()
-                        if (now2 - lastWakeTriggerMs >= WAKE_DEBOUNCE_MS) {
+                when (val outcome = wakeParser.parseFinal(txt)) {
+                    is WakeOutcome.WakeHeard -> {
+                        val now2 = clock.elapsedRealtimeMs()
+                        if (now2 - lastWakeTriggerMs >= config.wakeDebounceMs) {
                             lastWakeTriggerMs = now2
-                            var titleWakeWord = wakeWord.replaceFirstChar { it.uppercase() }
-                            effects.publishText("$titleWakeWord! Слушаю команду...")
-                            transitionTo(VoiceState.COMMAND_LISTENING)
+                            val previous = stateMachine.state
+                            val next = stateMachine.on(VoiceStateEvent.WakeHeard)
+                            if (next == previous) {
+                                logger.d(APPLICATION_NAME, "Wake ignored: SM rejected transition from $previous")
+                                return
+                            }
+                            effects.publishText("${outcome.titleCased}! Слушаю команду...")
+                            transitionTo(next)
                         } else {
-                            Log.d(APPLICATION_NAME, "Wake debounce: ignored")
+                            logger.d(APPLICATION_NAME, "Wake debounce: ignored")
                         }
                     }
 
-                    txt.startsWith("$wakeWord ") -> {
-                        val cmd = txt.removePrefix("$wakeWord ").trim()
-                        effects.publishText("Выполняю: $cmd")
-                        effects.onFinalCommand(cmd)
-                        // Остаёмся в WAKE
-                        vosk.resetWake()
+                    is WakeOutcome.WakeThenCommand -> {
+                        effects.publishText("Выполняю: ${outcome.command}")
+                        effects.onFinalCommand(outcome.command)
+                        // Staying in WAKE: reset the wake recognizer so the next utterance starts clean.
+                        recognizer.resetWake()
                     }
 
-                    else -> {
-                        vosk.resetWake()
+                    WakeOutcome.Nothing -> {
+                        recognizer.resetWake()
                     }
+
+                    is WakeOutcome.HeardPartial -> Unit
                 }
             }
 
-            is VoskResult.Partial -> {
-                val wakePartial = r.text.trim()
-                if (wakePartial.isNotEmpty() && now - lastUiUpdateMs >= UI_THROTTLE_MS) {
-                    lastUiUpdateMs = now
-                    effects.publishText("Слышу: $wakePartial")
+            is SpeechResult.Partial -> {
+                when (val outcome = wakeParser.parsePartial(r.text)) {
+                    is WakeOutcome.HeardPartial -> {
+                        if (now - lastUiUpdateMs >= config.uiThrottleMs) {
+                            lastUiUpdateMs = now
+                            effects.publishText("Слышу: ${outcome.text}")
+                        }
+                    }
+                    else -> Unit
                 }
             }
 
-            VoskResult.None -> Unit
+            SpeechResult.None -> Unit
         }
     }
 
@@ -122,22 +147,18 @@ class VoiceCoordinator(
         state = VoiceState.SWITCHING
         when (target) {
             VoiceState.WAKE_LISTENING -> {
-                handler.removeCallbacks(timeoutRunnable)
+                scheduler.cancel(CommandTimeoutToken)
                 effects.enterWake()
             }
 
             VoiceState.COMMAND_LISTENING -> {
                 effects.enterCommand()
-                handler.removeCallbacks(timeoutRunnable)
-                handler.postDelayed(timeoutRunnable, commandTimeoutMs)
+                scheduler.cancel(CommandTimeoutToken)
+                scheduler.postDelayed(config.commandTimeoutMs, CommandTimeoutToken) { onTimeout() }
             }
 
             VoiceState.SWITCHING -> Unit
         }
         state = target
     }
-
-    private fun normalize(s: String) = s.trim().lowercase()
-
-
 }

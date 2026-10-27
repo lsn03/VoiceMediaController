@@ -12,6 +12,7 @@ import ru.lsn03.voicemediacontroller.audio.ducker.AudioDucker
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPoolProvider
 import ru.lsn03.voicemediacontroller.command.CommandMatcher
 import ru.lsn03.voicemediacontroller.events.VoiceEvents
+import ru.lsn03.voicemediacontroller.text.TextNormalizer
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 
@@ -22,6 +23,7 @@ class VoiceEffectsImpl(
     private val vosk: VoskEngine,
     private val soundPoolProvider: SoundPoolProvider,
     private val repo: VoiceCommandRepository,
+    private val normalizer: TextNormalizer,
 ) : VoiceEffects {
 
     @Volatile
@@ -47,7 +49,7 @@ class VoiceEffectsImpl(
     }
 
     override fun onFinalCommand(cmd: String) {
-        val text = normalize(cmd)
+        val text = normalizer.normalize(cmd)
         if (text.isEmpty()) {
             Log.d(APPLICATION_NAME, "Empty command text")
             return
@@ -81,7 +83,5 @@ class VoiceEffectsImpl(
         publishText("Слушаю команду...")
         Log.d(APPLICATION_NAME, "VoiceService::enterCommand")
     }
-
-    private fun normalize(s: String) = s.trim().lowercase()
 
 }
