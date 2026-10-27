@@ -6,6 +6,11 @@ plugins {
     alias(libs.plugins.hilt)
     kotlin("kapt")
     alias(libs.plugins.ksp)
+    jacoco
+}
+
+jacoco {
+    toolVersion = libs.versions.jacoco.get()
 }
 
 android {
@@ -23,6 +28,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            enableUnitTestCoverage = true
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -44,6 +52,12 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {
@@ -57,10 +71,31 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.turbine)
+    testImplementation(libs.truth)
+    testImplementation(libs.mockk)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.core.ktx)
+    testImplementation(libs.androidx.arch.core.testing)
+    testImplementation(libs.androidx.room.testing)
+    testImplementation(libs.okhttp.mockwebserver)
+
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.turbine)
+    androidTestImplementation(libs.truth)
+    androidTestImplementation(libs.mockk.android)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.core.ktx)
+    androidTestImplementation(libs.androidx.arch.core.testing)
+    androidTestImplementation(libs.androidx.room.testing)
+    androidTestImplementation(libs.okhttp.mockwebserver)
+
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 
@@ -86,4 +121,63 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
 
+}
+
+// Classes excluded from coverage: generated code (Hilt, Room, Compose, DataBinding, resources).
+val jacocoCoverageExclusions = listOf(
+    "**/R.class",
+    "**/R\$*.class",
+    "**/BuildConfig.*",
+    "**/Manifest*.*",
+    "**/*_Factory*.*",
+    "**/*_MembersInjector*.*",
+    "**/Dagger*Component*.*",
+    "**/Hilt_*.*",
+    "**/*_HiltModules*.*",
+    "**/*_Hilt*.*",
+    "**/*_Impl*.*",
+    "**/ComposableSingletons*.*",
+    "**/*ComposableSingletons*.*",
+    "**/databinding/**",
+    "**/android/**/*.*"
+)
+
+tasks.register<JacocoReport>("jacocoTestReport") {
+    group = "verification"
+    description = "Generates JaCoCo coverage report merged across build-type unit tests."
+
+    val unitTestTasks = tasks.withType<Test>().matching { it.name.startsWith("test") && it.name.endsWith("UnitTest") }
+    dependsOn(unitTestTasks)
+
+    reports {
+        html.required.set(true)
+        xml.required.set(true)
+        csv.required.set(false)
+    }
+
+    // Use the debug variant's bytecode as the single source for class dirs; adding both debug and
+    // release would feed JaCoCo duplicate class entries. Debug carries `enableUnitTestCoverage`.
+    val kotlinClassDir = fileTree("${layout.buildDirectory.get()}/tmp/kotlin-classes/debug") {
+        exclude(jacocoCoverageExclusions)
+    }
+    val javaClassDir = fileTree("${layout.buildDirectory.get()}/intermediates/javac/debug") {
+        exclude(jacocoCoverageExclusions)
+    }
+    classDirectories.setFrom(files(kotlinClassDir, javaClassDir))
+
+    sourceDirectories.setFrom(files("src/main/java", "src/main/kotlin"))
+
+    executionData.setFrom(
+        fileTree(layout.buildDirectory.get()) {
+            include(
+                "jacoco/testDebugUnitTest.exec",
+                "jacoco/testReleaseUnitTest.exec",
+                "outputs/unit_test_code_coverage/**/*.exec"
+            )
+        }
+    )
+
+    // Baseline reports must be produced even when there is no execution data yet
+    // (the test suite grows incrementally; android-tester adds coverage after this PR).
+    setOnlyIf { true }
 }
