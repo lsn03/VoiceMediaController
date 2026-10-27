@@ -9,18 +9,18 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPrefs
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
-import ru.lsn03.voicemediacontroller.voice.VoiceCommandRepository
+import ru.lsn03.voicemediacontroller.voice.repo.WakeWordRepository
 import javax.inject.Inject
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val repo: VoiceCommandRepository,
+    private val wakeRepo: WakeWordRepository,
     private val soundPrefs: SoundPrefs
 ) : ViewModel() {
 
     val wakeWord: StateFlow<String> =
-        repo.observeWakeWord()
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "джарвис")
+        wakeRepo.observe()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), WakeWordRepository.DEFAULT_WAKE_WORD)
 
     // draft для поля ввода
     private val _wakeDraft = MutableStateFlow("")
@@ -62,7 +62,7 @@ class SettingsViewModel @Inject constructor(
     fun saveWakeWord() = viewModelScope.launch {
         val text = _wakeDraft.value.trim()
         Log.d(APPLICATION_NAME, "SettingiewModel::saveWakeWord save wake word=$text")
-        repo.setWakeWord(text)
+        wakeRepo.set(text)
         _events.send("Wake-word сохранён")
         _wakeDraft.value = text.trim().lowercase()
     }

@@ -7,6 +7,7 @@ import ru.lsn03.voicemediacontroller.core.time.Clock
 import ru.lsn03.voicemediacontroller.core.time.Scheduler
 import ru.lsn03.voicemediacontroller.text.TextNormalizer
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
+import ru.lsn03.voicemediacontroller.voice.repo.WakeWordRepository
 
 class VoiceCoordinator(
     private val recognizer: SpeechRecognizer,
@@ -20,10 +21,10 @@ class VoiceCoordinator(
     private val config: VoiceCoordinatorConfig,
 ) {
 
-    // Wake-word fallback is still coordinator-local; the duplicate with VoiceCommandRepository
-    // is scheduled to be deduplicated in PR 4.
+    // Mirrored from WakeWordRepository.observe() via VoiceService; read on the audio
+    // callback thread. @Volatile guarantees visibility of the String reference.
     @Volatile
-    private var wakeWord: String = "джарвис"
+    private var wakeWord: String = WakeWordRepository.DEFAULT_WAKE_WORD
 
     // Throttling timestamps and the visible-state mirror are mutated from the audio
     // callback thread exclusively; marked @Volatile so main-thread observers (timeout
@@ -54,7 +55,7 @@ class VoiceCoordinator(
 
     fun setWakeWord(word: String) {
         logger.d(APPLICATION_NAME, "Coordinator::setWakeWord new wake word=$word")
-        wakeWord = word.trim().lowercase().ifBlank { "джарвис" }
+        wakeWord = word.trim().lowercase().ifBlank { WakeWordRepository.DEFAULT_WAKE_WORD }
     }
 
     fun onTimeout() {

@@ -19,13 +19,13 @@ import ru.lsn03.voicemediacontroller.media.MediaControlGateway
 import ru.lsn03.voicemediacontroller.media.NowPlayingGateway
 import ru.lsn03.voicemediacontroller.text.TextNormalizer
 import ru.lsn03.voicemediacontroller.tts.SpeechGateway
-import ru.lsn03.voicemediacontroller.voice.VoiceCommandRepository
 import ru.lsn03.voicemediacontroller.voice.VoiceCoordinator
 import ru.lsn03.voicemediacontroller.voice.VoiceCoordinatorConfig
 import ru.lsn03.voicemediacontroller.voice.VoiceEffects
 import ru.lsn03.voicemediacontroller.voice.VoiceEffectsImpl
 import ru.lsn03.voicemediacontroller.voice.VoiceStateMachine
 import ru.lsn03.voicemediacontroller.voice.WakeParser
+import ru.lsn03.voicemediacontroller.voice.repo.VoicePhraseRepository
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 
 @Module
@@ -54,7 +54,7 @@ object ServiceModule {
         audioDucker: AudioDucker,
         voskEngine: VoskEngine,
         soundPoolProvider: SoundPoolProvider,
-        voiceCommandRepository: VoiceCommandRepository,
+        phraseRepo: VoicePhraseRepository,
         textNormalizer: TextNormalizer,
     ): VoiceEffects = VoiceEffectsImpl(
         ctx,
@@ -62,7 +62,7 @@ object ServiceModule {
         audioDucker = audioDucker,
         vosk = voskEngine,
         soundPoolProvider = soundPoolProvider,
-        repo = voiceCommandRepository,
+        phraseRepo = phraseRepo,
         normalizer = textNormalizer,
     )
 

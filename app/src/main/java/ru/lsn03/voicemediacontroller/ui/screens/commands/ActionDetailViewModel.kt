@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import ru.lsn03.voicemediacontroller.action.VoiceAction
 import ru.lsn03.voicemediacontroller.db.VoicePhraseEntity
-import ru.lsn03.voicemediacontroller.voice.VoiceCommandRepository
+import ru.lsn03.voicemediacontroller.voice.repo.VoicePhraseRepository
 import javax.inject.Inject
 
 data class PhraseUi(
@@ -20,7 +20,7 @@ data class PhraseUi(
 
 @HiltViewModel
 class ActionDetailViewModel @Inject constructor(
-    private val repo: VoiceCommandRepository,
+    private val repo: VoicePhraseRepository,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
     // ожидаем, что навигация кладёт actionName в аргументы

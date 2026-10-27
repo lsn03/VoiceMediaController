@@ -6,15 +6,15 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
-import ru.lsn03.voicemediacontroller.voice.VoiceCommandRepository
+import ru.lsn03.voicemediacontroller.voice.repo.WakeWordRepository
 import javax.inject.Inject
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
-    repo: VoiceCommandRepository
+    wakeRepo: WakeWordRepository
 ) : ViewModel() {
 
     val wakeWord: StateFlow<String> =
-        repo.observeWakeWord()
+        wakeRepo.observe()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
 }
