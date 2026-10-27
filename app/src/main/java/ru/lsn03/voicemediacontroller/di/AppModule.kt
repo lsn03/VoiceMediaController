@@ -15,9 +15,10 @@ import ru.lsn03.voicemediacontroller.audio.ducker.AudioDucker
 import ru.lsn03.voicemediacontroller.audio.ducker.AudioDuckerImpl
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPoolProvider
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPrefs
+import ru.lsn03.voicemediacontroller.core.audio.AudioSource
 import ru.lsn03.voicemediacontroller.core.log.AppLogger
 import ru.lsn03.voicemediacontroller.media.*
-import ru.lsn03.voicemediacontroller.service.AudioRecorder
+import ru.lsn03.voicemediacontroller.service.AndroidAudioSource
 import ru.lsn03.voicemediacontroller.service.VoiceService.Companion.SAMPLE_RATE
 import ru.lsn03.voicemediacontroller.text.TextNormalizer
 import ru.lsn03.voicemediacontroller.tts.SpeechGateway
@@ -54,7 +55,8 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideAudioRecorder(): AudioRecorder = AudioRecorder(sampleRate = SAMPLE_RATE)
+    fun provideAudioSource(logger: AppLogger): AudioSource =
+        AndroidAudioSource(sampleRate = SAMPLE_RATE, logger = logger)
 
     @Provides
     @Singleton
