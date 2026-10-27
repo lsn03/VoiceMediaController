@@ -26,9 +26,10 @@ import ru.lsn03.voicemediacontroller.di.TtsManager
 import ru.lsn03.voicemediacontroller.events.VoiceEvents
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import ru.lsn03.voicemediacontroller.utils.Utilities.VOICE_CHANNEL
-import ru.lsn03.voicemediacontroller.voice.VoiceCommandRepository
 import ru.lsn03.voicemediacontroller.voice.VoiceCoordinator
 import ru.lsn03.voicemediacontroller.voice.VoiceEffects
+import ru.lsn03.voicemediacontroller.voice.repo.GrammarRepository
+import ru.lsn03.voicemediacontroller.voice.repo.WakeWordRepository
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 import javax.inject.Inject
 
@@ -49,7 +50,10 @@ class VoiceService : Service() {
     }
 
     @Inject
-    lateinit var repo: VoiceCommandRepository
+    lateinit var wakeRepo: WakeWordRepository
+
+    @Inject
+    lateinit var grammarRepo: GrammarRepository
 
     @Inject
     lateinit var voiceCoordinator: VoiceCoordinator
@@ -86,7 +90,7 @@ class VoiceService : Service() {
     private val KEY_SAD_VOL = "sad_vol"
 
 
-    @Volatile private var currentWake: String = "Джарвис"
+    @Volatile private var currentWake: String = WakeWordRepository.DEFAULT_WAKE_WORD
 
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -147,10 +151,9 @@ class VoiceService : Service() {
 
         voiceEffects.start(serviceScope)
 
-        // ВАЖНО: collect грамматик отдельно (тоже один раз)
         Log.d(APPLICATION_NAME, "Subscribing to grammars")
         serviceScope.launch {
-            repo.observeWakeWord()
+            wakeRepo.observe()
                 .collect { wake ->
                     Log.d(APPLICATION_NAME, "Wake word updated: $wake")
                     currentWake = wake
@@ -160,8 +163,7 @@ class VoiceService : Service() {
         }
 
         serviceScope.launch {
-            // лучше использовать repo.grammars(serviceScope), раз ты его уже сделал
-            repo.grammars(this).collect { g ->
+            grammarRepo.observeGrammars().collect { g ->
                 Log.d(APPLICATION_NAME, "Applying grammars: wake=${g.wakeWordGrammarJson.length}, cmd=${g.commandGrammarJson.length}")
                 vosk.updateGrammars(g.wakeWordGrammarJson, g.commandGrammarJson, g.wakeCommandGrammarJson)
             }
@@ -234,7 +236,7 @@ class VoiceService : Service() {
     }
 
     private fun createNotification(wake: String): Notification {
-        val w = wake.trim().ifBlank { "Джарвис" }
+        val w = wake.trim().ifBlank { WakeWordRepository.DEFAULT_WAKE_WORD }
         val titleWake = w.replaceFirstChar { it.uppercaseChar() }
 
         return NotificationCompat.Builder(this, VOICE_CHANNEL)

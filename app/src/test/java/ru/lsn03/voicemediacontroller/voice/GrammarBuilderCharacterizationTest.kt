@@ -11,30 +11,35 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import ru.lsn03.voicemediacontroller.core.fakes.RecordingLogger
 import ru.lsn03.voicemediacontroller.db.VoiceCommandDao
 import ru.lsn03.voicemediacontroller.db.VoicePhraseEntity
 import ru.lsn03.voicemediacontroller.db.VoiceWakePhraseSettingEntity
 import ru.lsn03.voicemediacontroller.text.TextNormalizer
+import ru.lsn03.voicemediacontroller.voice.repo.GrammarRepositoryImpl
+import ru.lsn03.voicemediacontroller.voice.repo.VoicePhraseRepositoryImpl
+import ru.lsn03.voicemediacontroller.voice.repo.WakeWordRepositoryImpl
 
-/** Characterization: PR 3/4 may update assertions when consolidating normalize/grammar builders. */
+/** Characterization: pins JSON output of GrammarRepository / GrammarBuilder (post-PR 4 split). */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [33])
 class GrammarBuilderCharacterizationTest {
 
     /**
-     * Pins the three JSON strings produced today by
-     * `VoiceCommandRepository.observeVoskGrammars()` + the private `toVoskJsonArray()`.
-     *
-     * `toVoskJsonArray` is `private`, so we exercise it indirectly through the public
-     * `observeVoskGrammars` Flow. Robolectric is required to provide the real
-     * Android `org.json.JSONObject.quote` implementation used inside `toVoskJsonArray`.
+     * Pins the three JSON strings produced by `GrammarRepositoryImpl.observeGrammars()`
+     * which delegates to `GrammarBuilder.build()`. Robolectric provides the real
+     * Android `org.json.JSONObject.quote` implementation used inside `GrammarBuilder`.
      *
      * The Flow uses `.debounce(300)` — we drive virtual time via `runTest`.
      */
 
+    private val normalizer = TextNormalizer()
+    private val logger = RecordingLogger()
+    private val grammarBuilder = GrammarBuilder(normalizer, logger)
+
     @Test
-    fun observeVoskGrammars_twoPhrasesAndWakeWord_emitsExpectedJson() = runTest {
+    fun observeGrammars_twoPhrasesAndWakeWord_emitsExpectedJson() = runTest {
         val dao = mockk<VoiceCommandDao>()
         every { dao.observeSettings() } returns flowOf(
             VoiceWakePhraseSettingEntity(id = 1, wakeWord = "джарвис")
@@ -58,9 +63,11 @@ class GrammarBuilderCharacterizationTest {
             )
         )
 
-        val repo = VoiceCommandRepository(dao, TextNormalizer())
+        val phraseRepo = VoicePhraseRepositoryImpl(dao, normalizer, logger)
+        val wakeRepo = WakeWordRepositoryImpl(dao, normalizer)
+        val grammarRepo = GrammarRepositoryImpl(phraseRepo, wakeRepo, grammarBuilder)
 
-        repo.observeVoskGrammars().test {
+        grammarRepo.observeGrammars().test {
             val g = awaitItem()
             assertThat(g.wakeWordGrammarJson)
                 .isEqualTo("[\"джарвис\",\"[unk]\"]")
@@ -73,16 +80,18 @@ class GrammarBuilderCharacterizationTest {
     }
 
     @Test
-    fun observeVoskGrammars_emptyPhraseList_emitsUnkFallbackJson() = runTest {
+    fun observeGrammars_emptyPhraseList_emitsUnkFallbackJson() = runTest {
         val dao = mockk<VoiceCommandDao>()
         every { dao.observeSettings() } returns flowOf(
             VoiceWakePhraseSettingEntity(id = 1, wakeWord = "джарвис")
         )
         every { dao.observeEnabledPhrases() } returns flowOf(emptyList())
 
-        val repo = VoiceCommandRepository(dao, TextNormalizer())
+        val phraseRepo = VoicePhraseRepositoryImpl(dao, normalizer, logger)
+        val wakeRepo = WakeWordRepositoryImpl(dao, normalizer)
+        val grammarRepo = GrammarRepositoryImpl(phraseRepo, wakeRepo, grammarBuilder)
 
-        repo.observeVoskGrammars().test {
+        grammarRepo.observeGrammars().test {
             val g = awaitItem()
             assertThat(g.wakeWordGrammarJson)
                 .isEqualTo("[\"джарвис\",\"[unk]\"]")

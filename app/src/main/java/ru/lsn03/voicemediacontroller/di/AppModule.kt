@@ -15,16 +15,18 @@ import ru.lsn03.voicemediacontroller.audio.ducker.AudioDucker
 import ru.lsn03.voicemediacontroller.audio.ducker.AudioDuckerImpl
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPoolProvider
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPrefs
+import ru.lsn03.voicemediacontroller.core.log.AppLogger
 import ru.lsn03.voicemediacontroller.media.*
 import ru.lsn03.voicemediacontroller.service.AudioRecorder
 import ru.lsn03.voicemediacontroller.service.VoiceService.Companion.SAMPLE_RATE
 import ru.lsn03.voicemediacontroller.text.TextNormalizer
 import ru.lsn03.voicemediacontroller.tts.SpeechGateway
 import ru.lsn03.voicemediacontroller.tts.SpeechGatewayImpl
-import ru.lsn03.voicemediacontroller.voice.VoiceCommandRepository
+import ru.lsn03.voicemediacontroller.voice.GrammarBuilder
 import ru.lsn03.voicemediacontroller.voice.VoiceCoordinatorConfig
 import ru.lsn03.voicemediacontroller.voice.VoiceStateMachine
 import ru.lsn03.voicemediacontroller.voice.WakeParser
+import ru.lsn03.voicemediacontroller.voice.repo.WakeWordRepository
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 import javax.inject.Singleton
 
@@ -109,8 +111,15 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideWakeParser(repo: VoiceCommandRepository): WakeParser =
-        WakeParser { repo.currentWakeWord() }
+    fun provideGrammarBuilder(
+        normalizer: TextNormalizer,
+        logger: AppLogger,
+    ): GrammarBuilder = GrammarBuilder(normalizer, logger)
+
+    @Provides
+    @Singleton
+    fun provideWakeParser(wakeRepo: WakeWordRepository): WakeParser =
+        WakeParser { wakeRepo.current() }
 
 }
 

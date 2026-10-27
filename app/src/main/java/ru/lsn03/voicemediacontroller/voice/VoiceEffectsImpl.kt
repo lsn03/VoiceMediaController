@@ -14,6 +14,7 @@ import ru.lsn03.voicemediacontroller.command.CommandMatcher
 import ru.lsn03.voicemediacontroller.events.VoiceEvents
 import ru.lsn03.voicemediacontroller.text.TextNormalizer
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
+import ru.lsn03.voicemediacontroller.voice.repo.VoicePhraseRepository
 import ru.lsn03.voicemediacontroller.vosk.VoskEngine
 
 class VoiceEffectsImpl(
@@ -22,7 +23,7 @@ class VoiceEffectsImpl(
     private val audioDucker: AudioDucker,
     private val vosk: VoskEngine,
     private val soundPoolProvider: SoundPoolProvider,
-    private val repo: VoiceCommandRepository,
+    private val phraseRepo: VoicePhraseRepository,
     private val normalizer: TextNormalizer,
 ) : VoiceEffects {
 
@@ -31,7 +32,7 @@ class VoiceEffectsImpl(
 
     fun startDbMatcher(scope: CoroutineScope) {
         scope.launch {
-            repo.observeBindings().collect { bindings ->
+            phraseRepo.observeBindings().collect { bindings ->
                 Log.d(APPLICATION_NAME, "Matcher updated: bindings=${bindings}")
                 matcher = CommandMatcher(bindings)
                 Log.d(APPLICATION_NAME, "matcher set id=${System.identityHashCode(matcher)} size=${bindings.size}")
