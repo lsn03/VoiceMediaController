@@ -3,7 +3,7 @@ package ru.lsn03.voicemediacontroller.core.speech
 import kotlinx.coroutines.flow.Flow
 
 interface ModelDownloader {
-    fun download(locale: SpeechLocale): Flow<DownloadProgress>
+    fun download(locale: SpeechLocale, entry: ModelCatalogEntry): Flow<DownloadProgress>
     suspend fun delete(locale: SpeechLocale): Result<Unit>
 }
 

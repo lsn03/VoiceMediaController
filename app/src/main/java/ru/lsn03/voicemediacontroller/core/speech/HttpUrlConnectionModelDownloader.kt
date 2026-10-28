@@ -19,17 +19,15 @@ import kotlin.coroutines.coroutineContext
 
 class HttpUrlConnectionModelDownloader(
     private val context: Context,
-    private val catalog: ModelCatalog = ModelCatalog,
     private val logger: AppLogger,
     private val connectionFactory: (String) -> HttpURLConnection = { url ->
         URL(url).openConnection() as HttpURLConnection
     },
 ) : ModelDownloader {
 
-    override fun download(locale: SpeechLocale): Flow<DownloadProgress> = flow {
+    override fun download(locale: SpeechLocale, entry: ModelCatalogEntry): Flow<DownloadProgress> = flow {
         emit(DownloadProgress.Idle)
-        val entry = catalog.entryFor(locale)
-        if (entry == null || entry.url.isNullOrBlank()) {
+        if (entry.url.isNullOrBlank()) {
             emit(DownloadProgress.Failed("No downloadable model for locale '${locale.tag}'"))
             return@flow
         }

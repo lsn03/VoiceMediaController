@@ -50,8 +50,13 @@ class ModelsViewModel @Inject constructor(
 
     fun onDownload(locale: SpeechLocale) {
         if (activeJobs[locale]?.isActive == true) return
+        val entry = ModelCatalog.entryFor(locale)
+        if (entry == null) {
+            updateProgress(locale, DownloadProgress.Failed("No catalog entry for locale '${locale.tag}'"))
+            return
+        }
         val job = viewModelScope.launch {
-            downloader.download(locale).collect { progress ->
+            downloader.download(locale, entry).collect { progress ->
                 updateProgress(locale, progress)
             }
             refreshLocale(locale)
