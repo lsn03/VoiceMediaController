@@ -17,6 +17,9 @@ import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPoolProvider
 import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPrefs
 import ru.lsn03.voicemediacontroller.core.audio.AudioSource
 import ru.lsn03.voicemediacontroller.core.log.AppLogger
+import ru.lsn03.voicemediacontroller.core.speech.AssetModelProvider
+import ru.lsn03.voicemediacontroller.core.speech.ModelProvider
+import ru.lsn03.voicemediacontroller.core.speech.SpeechLocale
 import ru.lsn03.voicemediacontroller.media.*
 import ru.lsn03.voicemediacontroller.service.AndroidAudioSource
 import ru.lsn03.voicemediacontroller.service.VoiceService.Companion.SAMPLE_RATE
@@ -66,9 +69,17 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideModelProvider(
+        @ApplicationContext ctx: Context,
+        logger: AppLogger,
+    ): ModelProvider = AssetModelProvider(ctx, logger)
+
+    @Provides
+    @Singleton
     fun provideVoskEngine(
-        @ApplicationContext ctx: Context
-    ): VoskEngine = VoskEngine(ctx)
+        modelProvider: ModelProvider,
+        logger: AppLogger,
+    ): VoskEngine = VoskEngine(modelProvider, SpeechLocale.RU, logger)
 
 
     @Provides
