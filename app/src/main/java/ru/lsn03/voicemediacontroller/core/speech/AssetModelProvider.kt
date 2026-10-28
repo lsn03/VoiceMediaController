@@ -16,21 +16,22 @@ class AssetModelProvider(
 
     override suspend fun resolve(locale: SpeechLocale): Result<ModelLocation> = runCatching {
         cleanLegacyCacheModel()
-        val existing = findModelDir(targetDir(locale))
-        if (existing != null) {
-            return@runCatching ModelLocation(locale, existing.absolutePath, ModelLocation.Source.ASSET)
+        val onDisk = findModelDir(targetDir(locale))
+        if (onDisk != null) {
+            val source = if (hasAsset(locale)) ModelLocation.Source.ASSET else ModelLocation.Source.DOWNLOADED
+            return@runCatching ModelLocation(locale, onDisk.absolutePath, source)
         }
-        if (!hasAsset(locale)) {
-            throw ModelUnavailableException(locale)
+        if (hasAsset(locale)) {
+            val target = targetDir(locale)
+            target.mkdirs()
+            copyAssetFolder(assetRoot(locale), target)
+            val copied = findModelDir(target)
+                ?: throw IOException("Model copied but no inner model dir at ${target.absolutePath}")
+            copied.setReadable(true, false)
+            logger.d(APPLICATION_NAME, "AssetModelProvider: locale=${locale.tag} path=${copied.absolutePath}")
+            return@runCatching ModelLocation(locale, copied.absolutePath, ModelLocation.Source.ASSET)
         }
-        val target = targetDir(locale)
-        target.mkdirs()
-        copyAssetFolder(assetRoot(locale), target)
-        val copied = findModelDir(target)
-            ?: throw IOException("Model copied but no inner model dir at ${target.absolutePath}")
-        copied.setReadable(true, false)
-        logger.d(APPLICATION_NAME, "AssetModelProvider: locale=${locale.tag} path=${copied.absolutePath}")
-        ModelLocation(locale, copied.absolutePath, ModelLocation.Source.ASSET)
+        throw DownloadRequired(locale)
     }
 
     private fun targetDir(locale: SpeechLocale): File =

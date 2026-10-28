@@ -18,6 +18,8 @@ import ru.lsn03.voicemediacontroller.audio.soundpool.SoundPrefs
 import ru.lsn03.voicemediacontroller.core.audio.AudioSource
 import ru.lsn03.voicemediacontroller.core.log.AppLogger
 import ru.lsn03.voicemediacontroller.core.speech.AssetModelProvider
+import ru.lsn03.voicemediacontroller.core.speech.HttpUrlConnectionModelDownloader
+import ru.lsn03.voicemediacontroller.core.speech.ModelDownloader
 import ru.lsn03.voicemediacontroller.core.speech.ModelProvider
 import ru.lsn03.voicemediacontroller.core.speech.SpeechLocale
 import ru.lsn03.voicemediacontroller.media.*
@@ -73,6 +75,13 @@ object AppModule {
         @ApplicationContext ctx: Context,
         logger: AppLogger,
     ): ModelProvider = AssetModelProvider(ctx, logger)
+
+    @Provides
+    @Singleton
+    fun provideModelDownloader(
+        @ApplicationContext ctx: Context,
+        logger: AppLogger,
+    ): ModelDownloader = HttpUrlConnectionModelDownloader(ctx, logger = logger)
 
     @Provides
     @Singleton
