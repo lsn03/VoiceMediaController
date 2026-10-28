@@ -26,6 +26,7 @@ import androidx.navigation.compose.rememberNavController
 import ru.lsn03.voicemediacontroller.ui.screens.commands.ActionDetailScreen
 import ru.lsn03.voicemediacontroller.ui.screens.commands.CommandsScreen
 import ru.lsn03.voicemediacontroller.ui.screens.home.HomeScreen
+import ru.lsn03.voicemediacontroller.ui.screens.models.ModelsScreen
 import ru.lsn03.voicemediacontroller.ui.screens.settings.SettingsScreen
 
 @Composable
@@ -35,6 +36,7 @@ fun AppRoot() {
     val topLevel = listOf(
         TopLevelDestination.Home,
         TopLevelDestination.Commands,
+        TopLevelDestination.Models,
         TopLevelDestination.Settings
     )
 
@@ -56,6 +58,9 @@ fun AppRoot() {
                     }
                 )
             }
+            composable(TopLevelDestination.Models.route) {
+                ModelsScreen()
+            }
             composable(TopLevelDestination.Settings.route) {
                 SettingsScreen()
             }
@@ -76,6 +81,7 @@ private enum class TopLevelDestination(
 ) {
     Home("home", "Главная"),
     Commands("commands", "Команды"),
+    Models("models", "Модели"),
     Settings("settings", "Настройки");
 }
 
@@ -114,6 +120,7 @@ private fun BottomBar(
                     val icon = when (dest) {
                         TopLevelDestination.Home -> Icons.Default.Home
                         TopLevelDestination.Commands -> Icons.Default.List
+                        TopLevelDestination.Models -> Icons.Default.Search
                         TopLevelDestination.Settings -> Icons.Default.Settings
                     }
                     Icon(icon, contentDescription = dest.label)
