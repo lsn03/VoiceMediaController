@@ -139,15 +139,50 @@ class AssetModelProviderTest {
     }
 
     @Test
-    fun resolve_missingAsset_returnsFailureWithModelUnavailableException() = runTest {
+    fun resolve_missingAsset_returnsFailureWithDownloadRequired() = runTest {
         stubAssetTree(emptyMap())
 
         val result = provider.resolve(SpeechLocale("de"))
 
         assertThat(result.isFailure).isTrue()
         val cause = result.exceptionOrNull()
-        assertThat(cause).isInstanceOf(ModelUnavailableException::class.java)
-        assertThat(cause!!.message).contains("de")
+        assertThat(cause).isInstanceOf(DownloadRequired::class.java)
+        val downloadRequired = cause as DownloadRequired
+        assertThat(downloadRequired.locale).isEqualTo(SpeechLocale("de"))
+        assertThat(downloadRequired.message).contains("de")
+    }
+
+    @Test
+    fun resolve_downloadedOnDiskWithoutAsset_returnsDownloadedSource() = runTest {
+        // Simulate a model that was fetched by ModelDownloader: present on
+        // disk under filesDir/models/<locale>/... but with NO matching asset.
+        stubAssetTree(emptyMap())
+        val downloaded = File(filesDir, "models/en/vosk-model-small-en-us-0.15").apply { mkdirs() }
+        repeat(4) { File(downloaded, "f$it").writeText("x") }
+
+        val result = provider.resolve(SpeechLocale.EN)
+
+        assertThat(result.isSuccess).isTrue()
+        val location = result.getOrThrow()
+        assertThat(location.locale).isEqualTo(SpeechLocale.EN)
+        assertThat(location.absolutePath).isEqualTo(downloaded.absolutePath)
+        assertThat(location.source).isEqualTo(ModelLocation.Source.DOWNLOADED)
+    }
+
+    @Test
+    fun resolve_whenBothAssetAndDiskPresent_assetWins() = runTest {
+        // When the asset AND an on-disk copy coexist, the provider reports
+        // the source as ASSET: hasAsset() short-circuits the DOWNLOADED label.
+        stubAssetTree(ruModelAssets())
+        val diskDir = File(filesDir, "models/ru/pretend-model").apply { mkdirs() }
+        repeat(5) { File(diskDir, "file$it").writeText("fixture") }
+
+        val result = provider.resolve(SpeechLocale.RU)
+
+        assertThat(result.isSuccess).isTrue()
+        val location = result.getOrThrow()
+        assertThat(location.absolutePath).isEqualTo(diskDir.absolutePath)
+        assertThat(location.source).isEqualTo(ModelLocation.Source.ASSET)
     }
 
     @Test
