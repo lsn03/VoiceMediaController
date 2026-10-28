@@ -4,21 +4,24 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Process
-import android.util.Log
+import ru.lsn03.voicemediacontroller.core.audio.AudioSource
+import ru.lsn03.voicemediacontroller.core.log.AppLogger
 import ru.lsn03.voicemediacontroller.utils.Utilities.APPLICATION_NAME
 import java.util.concurrent.atomic.AtomicBoolean
 
-class AudioRecorder(
+class AndroidAudioSource(
     private val sampleRate: Int,
+    private val logger: AppLogger,
     private val channelConfig: Int = AudioFormat.CHANNEL_IN_MONO,
     private val audioFormat: Int = AudioFormat.ENCODING_PCM_16BIT,
     private val audioSource: Int = MediaRecorder.AudioSource.MIC,
-) {
+) : AudioSource {
+
     private var audioRecord: AudioRecord? = null
     private var thread: Thread? = null
     private val running = AtomicBoolean(false)
 
-    fun start(onPcm: (pcm: ByteArray) -> Unit, onError: (String) -> Unit = {}) {
+    override fun start(onPcm: (ByteArray) -> Unit, onError: (String) -> Unit) {
         if (running.getAndSet(true)) return
 
         thread = Thread {
@@ -37,7 +40,7 @@ class AudioRecorder(
             try {
                 ar.startRecording()
             } catch (t: Throwable) {
-                Log.e(APPLICATION_NAME, "startRecording failed", t)
+                logger.e(APPLICATION_NAME, "startRecording failed", t)
                 onError("AudioRecord startRecording failed")
                 stop()
                 return@Thread
@@ -58,16 +61,15 @@ class AudioRecorder(
                 onPcm(pcm)
             }
 
-            // cleanup
             try {
                 ar.stop()
             } catch (ex: Throwable) {
-                Log.e(APPLICATION_NAME, "ar.stop: $ex")
+                logger.e(APPLICATION_NAME, "ar.stop: $ex")
             }
             try {
                 ar.release()
             } catch (ex: Throwable) {
-                Log.e(APPLICATION_NAME, "ar.release: $ex")
+                logger.e(APPLICATION_NAME, "ar.release: $ex")
             }
             audioRecord = null
         }.apply { name = "AudioRecorderThread" }
@@ -75,18 +77,25 @@ class AudioRecorder(
         thread?.start()
     }
 
-    fun stop() {
+    override fun stop() {
         running.set(false)
 
-        // Разбудить блокирующий read(): stop() обычно достаточно
         try { audioRecord?.stop() } catch (_: Throwable) {}
 
-        // Подождать завершения потока чуть-чуть (не обязательно, но полезно)
-        try { thread?.join(300) } catch (_: Throwable) {}
+        // Contractual bound: callers (e.g. VoicePipeline.stop) must observe the
+        // worker thread terminated within 500 ms so tests can assert thread lifecycle.
+        val worker = thread
+        try {
+            worker?.join(JOIN_TIMEOUT_MS)
+        } catch (_: Throwable) {}
+        if (worker != null && worker.isAlive) {
+            logger.w(APPLICATION_NAME, "AudioRecorderThread did not terminate within ${JOIN_TIMEOUT_MS}ms")
+        }
 
         thread = null
-        // audioRecord не release'им здесь — это сделает поток в одном месте
     }
 
-
+    private companion object {
+        const val JOIN_TIMEOUT_MS = 500L
+    }
 }
