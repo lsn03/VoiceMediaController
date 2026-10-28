@@ -36,16 +36,15 @@ import java.util.zip.ZipOutputStream
  *   - happy path: progress emissions, final layout, staging cleanup.
  *   - 404: `Failed(...)` + no staging left.
  *   - truncated stream: `Failed(...)` + no staging left.
+ *   - checksum mismatch: `Failed("...checksum...")` + staging cleaned and
+ *     final dir never created.
  *   - cancellation: no exception past collector, staging cleaned, no final dir.
  *   - delete: wipes the model dir.
  *
- * Note on checksum mismatch: the production code reads `entry.sha256` from
- * the hard-wired [ModelCatalog] singleton (constructor arg is typed as the
- * singleton type), and the catalog's EN entry currently carries an empty
- * `sha256`. The downloader intentionally skips strict verification when the
- * catalog sha is blank, so the mismatch branch cannot be exercised in a
- * JVM test without a seam. The scenario is covered as `@Ignore` below and
- * flagged for the reviewer in the hand-off.
+ * The seam used throughout: `download(locale, entry)` takes a
+ * [ModelCatalogEntry] directly, so tests can craft entries with the exact
+ * `url` / `sha256` they need instead of leaning on the production
+ * [ModelCatalog] singleton.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ModelDownloaderTest {
@@ -97,6 +96,21 @@ class ModelDownloaderTest {
             "${locale.tag}${HttpUrlConnectionModelDownloader.STAGING_SUFFIX}",
         )
 
+    private fun sha256Hex(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { String.format("%02x", it) }
+
+    /**
+     * Builds a [ModelCatalogEntry] for the test. When `sha256` is left blank
+     * the downloader skips strict verification; pass a concrete hex sha to
+     * exercise the mismatch branch.
+     */
+    private fun entry(
+        url: String?,
+        sha256: String = "",
+        sizeBytes: Long? = null,
+    ): ModelCatalogEntry = ModelCatalogEntry(url = url, sha256 = sha256, sizeBytes = sizeBytes)
+
     // ---------- happy path ----------
 
     @Test
@@ -115,7 +129,7 @@ class ModelDownloaderTest {
         val url = server.url("/model.zip").toString()
         val downloader = newDownloader(url)
 
-        val progress = downloader.download(SpeechLocale.EN).toList()
+        val progress = downloader.download(SpeechLocale.EN, entry(url = url)).toList()
 
         assertThat(progress.first()).isEqualTo(DownloadProgress.Idle)
         assertThat(progress.any { it is DownloadProgress.Downloading }).isTrue()
@@ -133,16 +147,16 @@ class ModelDownloaderTest {
     @Test
     fun download_happyPath_verifyingProgressCarriesComputedSha() = runTest {
         val payload = zipOf(mapOf("a/f" to byteArrayOf(9, 9, 9)))
-        val expectedSha = MessageDigest.getInstance("SHA-256").digest(payload)
-            .joinToString("") { String.format("%02x", it) }
+        val expectedSha = sha256Hex(payload)
         server.enqueue(
             MockResponse()
                 .setResponseCode(200)
                 .setBody(Buffer().write(payload)),
         )
-        val downloader = newDownloader(server.url("/model.zip").toString())
+        val url = server.url("/model.zip").toString()
+        val downloader = newDownloader(url)
 
-        val progress = downloader.download(SpeechLocale.EN).toList()
+        val progress = downloader.download(SpeechLocale.EN, entry(url = url)).toList()
 
         val verifying = progress.filterIsInstance<DownloadProgress.Verifying>()
         assertThat(verifying).hasSize(1)
@@ -154,9 +168,10 @@ class ModelDownloaderTest {
     @Test
     fun download_http404_emitsFailed_andCleansStaging() = runTest {
         server.enqueue(MockResponse().setResponseCode(404))
-        val downloader = newDownloader(server.url("/missing.zip").toString())
+        val url = server.url("/missing.zip").toString()
+        val downloader = newDownloader(url)
 
-        val progress = downloader.download(SpeechLocale.EN).toList()
+        val progress = downloader.download(SpeechLocale.EN, entry(url = url)).toList()
 
         val failed = progress.last() as DownloadProgress.Failed
         assertThat(failed.reason).contains("404")
@@ -189,9 +204,10 @@ class ModelDownloaderTest {
                 .setHeader("Content-Length", header.size.toString())
                 .setBody(Buffer().write(header)),
         )
-        val downloader = newDownloader(server.url("/trunc.zip").toString())
+        val url = server.url("/trunc.zip").toString()
+        val downloader = newDownloader(url)
 
-        val progress = downloader.download(SpeechLocale.EN).toList()
+        val progress = downloader.download(SpeechLocale.EN, entry(url = url)).toList()
 
         assertThat(progress.last()).isInstanceOf(DownloadProgress.Failed::class.java)
         assertThat(stagingDir(SpeechLocale.EN).exists()).isFalse()
@@ -210,7 +226,7 @@ class ModelDownloaderTest {
             connectionFactory = { _ -> java.net.URL(url).openConnection() as HttpURLConnection },
         )
 
-        val progress = downloader.download(SpeechLocale.EN).toList()
+        val progress = downloader.download(SpeechLocale.EN, entry(url = url)).toList()
 
         assertThat(progress.last()).isInstanceOf(DownloadProgress.Failed::class.java)
         assertThat(stagingDir(SpeechLocale.EN).exists()).isFalse()
@@ -218,33 +234,56 @@ class ModelDownloaderTest {
     }
 
     @Test
-    fun download_ruLocale_hasNoDownloadableUrl_emitsFailed() = runTest {
-        // The RU entry in the real catalog has url=null (asset-only), so a
-        // download request must short-circuit to Failed before any HTTP work.
+    fun download_entryUrlIsNull_emitsFailed_andNeverOpensConnection() = runTest {
+        // Asset-only locales carry url=null in the catalog, so a download
+        // request must short-circuit to Failed before any HTTP work.
         val downloader = HttpUrlConnectionModelDownloader(
             context = context,
             logger = logger,
             connectionFactory = { _ -> error("must not open a connection for asset-only locale") },
         )
 
-        val progress = downloader.download(SpeechLocale.RU).toList()
+        val progress = downloader.download(SpeechLocale.RU, entry(url = null)).toList()
 
         val failed = progress.last() as DownloadProgress.Failed
         assertThat(failed.reason).contains("ru")
     }
 
-    @org.junit.Ignore(
-        "ModelCatalog is a Kotlin `object` wired by concrete type into the " +
-            "downloader constructor, so a test-only catalog with a non-blank sha " +
-            "cannot be injected. The EN catalog entry currently carries " +
-            "sha256=\"\" (TODO) and the downloader skips strict verification " +
-            "when the sha is blank; the checksum-mismatch branch is therefore " +
-            "unreachable from JVM tests. Reviewer: convert ModelCatalog to an " +
-            "interface (or pass sha explicitly to download(...)) to re-enable."
-    )
     @Test
-    fun download_checksumMismatch_emitsFailed_andCleansStaging() {
-        // Intentionally empty: see @Ignore reason above.
+    fun download_checksumMismatch_emitsFailed_andCleansStaging() = runTest {
+        // Server returns a well-formed ZIP body; the entry carries a
+        // deliberately-wrong sha so the downloader's
+        // `entry.sha256.isNotBlank() && !sha.equals(entry.sha256, ...)`
+        // branch fires. We assert the terminal Failed carries a
+        // checksum-ish reason and that the staging dir is wiped while
+        // the final destination was never created.
+        val payload = zipOf(mapOf("vosk-model-small-en/README" to "r".toByteArray()))
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Length", payload.size.toString())
+                .setBody(Buffer().write(payload)),
+        )
+        val url = server.url("/mismatch.zip").toString()
+        val downloader = newDownloader(url)
+
+        // A 64-char hex that is NOT the sha-256 of `payload`.
+        val wrongSha = "0".repeat(64)
+        val actualSha = sha256Hex(payload)
+        // Guard: if, by some miracle, the fixture body hashes to all-zero,
+        // the test would silently pass. Fail loudly instead.
+        check(actualSha != wrongSha) { "fixture collision: pick a different wrongSha" }
+
+        val progress = downloader.download(
+            SpeechLocale.EN,
+            entry(url = url, sha256 = wrongSha),
+        ).toList()
+
+        val failed = progress.last() as DownloadProgress.Failed
+        assertThat(failed.reason.lowercase()).contains("checksum")
+        // Staging must be wiped and the final destination must never appear.
+        assertThat(stagingDir(SpeechLocale.EN).exists()).isFalse()
+        assertThat(modelsDir(SpeechLocale.EN).exists()).isFalse()
     }
 
     // ---------- cancellation ----------
@@ -263,7 +302,8 @@ class ModelDownloaderTest {
                 .setBody(slowBody)
                 .throttleBody(1024, 50, java.util.concurrent.TimeUnit.MILLISECONDS),
         )
-        val downloader = newDownloader(server.url("/slow.zip").toString())
+        val url = server.url("/slow.zip").toString()
+        val downloader = newDownloader(url)
 
         // Run on a real IO scope so the throttled read actually blocks and
         // we can cancel it mid-stream. runTest's virtual clock cannot
@@ -271,7 +311,7 @@ class ModelDownloaderTest {
         val scope = CoroutineScope(Dispatchers.IO)
         val seenDownloading = Channel<Unit>(capacity = 1)
         val job = scope.launch {
-            downloader.download(SpeechLocale.EN).collect { p ->
+            downloader.download(SpeechLocale.EN, entry(url = url)).collect { p ->
                 if (p is DownloadProgress.Downloading && p.bytes > 0) {
                     seenDownloading.trySend(Unit)
                 }
