@@ -14,6 +14,7 @@ import org.junit.Test
 import ru.lsn03.voicemediacontroller.core.fakes.MainDispatcherRule
 import ru.lsn03.voicemediacontroller.core.speech.DownloadProgress
 import ru.lsn03.voicemediacontroller.core.speech.ModelCatalog
+import ru.lsn03.voicemediacontroller.core.speech.ModelCatalogEntry
 import ru.lsn03.voicemediacontroller.core.speech.ModelDownloader
 import ru.lsn03.voicemediacontroller.core.speech.ModelLocation
 import ru.lsn03.voicemediacontroller.core.speech.ModelProvider
@@ -56,8 +57,20 @@ class ModelsViewModelTest {
         var deleteCalls: Int = 0
             private set
 
-        override fun download(locale: SpeechLocale): Flow<DownloadProgress> =
-            scripts[locale]?.invoke() ?: flowOf(DownloadProgress.Idle, DownloadProgress.Done)
+        var downloadCalls: Int = 0
+            private set
+        var lastDownloadArgs: Pair<SpeechLocale, ModelCatalogEntry>? = null
+            private set
+
+        override fun download(
+            locale: SpeechLocale,
+            entry: ModelCatalogEntry,
+        ): Flow<DownloadProgress> {
+            downloadCalls += 1
+            lastDownloadArgs = locale to entry
+            return scripts[locale]?.invoke()
+                ?: flowOf(DownloadProgress.Idle, DownloadProgress.Done)
+        }
 
         override suspend fun delete(locale: SpeechLocale): Result<Unit> {
             deleteCalls += 1
@@ -310,6 +323,35 @@ class ModelsViewModelTest {
             assertThat(cleared.message == null).isTrue()
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @org.junit.Ignore(
+        "ModelsViewModel resolves catalog entries via the ModelCatalog " +
+            "Kotlin `object` singleton directly (ModelCatalog.entryFor(locale)), " +
+            "so a test-only catalog cannot be injected to force the " +
+            "entry==null branch. Additionally, init { refresh() } only " +
+            "populates `items` from ModelCatalog.locales(), so calling " +
+            "onDownload(unknownLocale) hits updateProgress() but the Failed " +
+            "status cannot surface in `state.items` because no item carries " +
+            "that locale. Reviewer/android-coder follow-up: inject a " +
+            "ModelCatalog seam (interface or constructor arg) and either " +
+            "add an \"items.add(...)\" step for unknown locales, or surface " +
+            "the error via `state.message`."
+    )
+    @Test
+    fun onDownload_whenCatalogHasNoEntry_emitsFailedWithoutDispatching() = runTest {
+        val provider = FakeProvider()
+        val downloader = ScriptedDownloader()
+        val vm = ModelsViewModel(provider, downloader)
+
+        val unknown = SpeechLocale("de")
+        vm.onDownload(unknown)
+
+        // Observable half: downloader.download() must not run.
+        assertThat(downloader.downloadCalls).isEqualTo(0)
+        // Unobservable half (requires the seam described above): the
+        // Failed("No catalog entry for locale 'de'") emission is dropped
+        // because `items` never contains an entry for "de".
     }
 
     @Test
